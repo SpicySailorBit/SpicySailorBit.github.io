@@ -1,0 +1,19 @@
+/* Wygląd całej strony (ciała) */
+body {
+    background-color: #f4f4f9; /* Jasnoszare tło */
+    font-family: Arial, sans-serif; /* Ładniejsza, prosta czcionka */
+    text-align: center; /* Wyśrodkowanie tekstu */
+    padding-top: 50px; /* Odsunięcie od góry strony */
+}
+
+/* Wygląd głównego nagłówka */
+h1 {
+    color: #2c3e50; /* Ciemnogranatowy kolor */
+    font-size: 48px; /* Wielkość tekstu */
+}
+
+/* Wygląd zwykłego tekstu */
+p {
+    color: #34495e; /* Niebieskoszary kolor */
+    font-size: 20px;
+}
