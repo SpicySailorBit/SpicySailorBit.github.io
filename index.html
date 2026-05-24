@@ -3,13 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Moja pierwsza strona</title>
+    <title>Mój Prywatny Notatnik</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    
+    <div class="container">
+        <!-- Górny pasek z tytułem i logowaniem -->
+        <header>
+            <h1>Mój Notatnik</h1>
+            <button id="login-btn" class="btn-outline">Zaloguj przez Google</button>
+        </header>
 
-    <h1>Hello World!</h1>
-    <p>Moja strona na GitHub Pages działa poprawnie!</p>
+        <!-- Główna sekcja notatnika -->
+        <main>
+            <!-- Miejsce do wpisywania tekstu -->
+            <textarea id="note-area" placeholder="Zacznij pisać swoją notatkę tutaj..."></textarea>
+            
+            <!-- Przyciski akcji -->
+            <div class="actions">
+                <button id="save-btn" class="btn-primary">Zapisz na Dysku</button>
+                <button id="clear-btn" class="btn-secondary">Wyczyść ekran</button>
+            </div>
+        </main>
+    </div>
 
 </body>
 </html>
