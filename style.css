@@ -1,19 +1,107 @@
-/* Wygląd całej strony (ciała) */
+/* Resetowanie domyślnych marginesów przeglądarki */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+/* Tło całej strony i ustawienie na środku */
 body {
-    background-color: #f4f4f9; /* Jasnoszare tło */
-    font-family: Arial, sans-serif; /* Ładniejsza, prosta czcionka */
-    text-align: center; /* Wyśrodkowanie tekstu */
-    padding-top: 50px; /* Odsunięcie od góry strony */
+    background-color: #f0f2f5; /* Delikatny, bardzo jasny szary */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 20px;
 }
 
-/* Wygląd głównego nagłówka */
+/* Główny kontener notatnika (biała "kartka") */
+.container {
+    width: 100%;
+    max-width: 800px; /* Maksymalna szerokość */
+    background-color: white;
+    border-radius: 12px; /* Zaokrąglone rogi */
+    box-shadow: 0 5px 15px rgba(0,0,0,0.08); /* Delikatny cień */
+    padding: 30px;
+    margin-top: 40px;
+}
+
+/* Nagłówek */
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid #f0f2f5;
+    padding-bottom: 20px;
+    margin-bottom: 20px;
+}
+
 h1 {
-    color: #2c3e50; /* Ciemnogranatowy kolor */
-    font-size: 48px; /* Wielkość tekstu */
+    color: #1a1a1a;
+    font-size: 24px;
 }
 
-/* Wygląd zwykłego tekstu */
-p {
-    color: #34495e; /* Niebieskoszary kolor */
-    font-size: 20px;
+/* Pole tekstowe */
+textarea {
+    width: 100%;
+    height: 400px; /* Wysokość pola tekstowego */
+    padding: 15px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 16px;
+    font-family: inherit;
+    resize: vertical; /* Pozwala użytkownikowi rozciągać pole tylko w dół */
+    outline: none;
+}
+
+/* Zmiana obramowania po kliknięciu w pole tekstowe */
+textarea:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+/* Sekcja przycisków */
+.actions {
+    margin-top: 20px;
+    display: flex;
+    gap: 12px; /* Odstęp między przyciskami */
+}
+
+/* Wspólny styl dla wszystkich przycisków */
+button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s; /* Płynna animacja najechania myszką */
+}
+
+/* Przycisk Zapisz (Zielony) */
+.btn-primary {
+    background-color: #10b981;
+    color: white;
+}
+.btn-primary:hover {
+    background-color: #059669;
+}
+
+/* Przycisk Wyczyść (Czerwony) */
+.btn-secondary {
+    background-color: #ef4444;
+    color: white;
+}
+.btn-secondary:hover {
+    background-color: #dc2626;
+}
+
+/* Przycisk Logowania (Z obramowaniem) */
+.btn-outline {
+    background-color: transparent;
+    border: 2px solid #3b82f6;
+    color: #3b82f6;
+}
+.btn-outline:hover {
+    background-color: #3b82f6;
+    color: white;
 }
