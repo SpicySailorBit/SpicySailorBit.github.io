@@ -8,16 +8,36 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <style>
-        body, html { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; }
+        body, html { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; overflow: hidden; }
         #map { width: 100%; height: 100vh; z-index: 1; }
         
+        /* Zmieniony styl panelu, by lepiej działał na mobile */
         #ui-panel {
-            position: absolute; top: 20px; right: 20px; z-index: 1000;
-            background: white; padding: 20px; border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2); width: 300px;
+            position: absolute; top: 10px; right: 10px; z-index: 1000;
+            background: white; border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3); 
+            width: 320px; max-width: 90vw; /* Nie szerszy niż 90% ekranu telefonu */
+            display: flex; flex-direction: column;
         }
-        #ui-panel h3 { margin-top: 0; }
-        #address-input { width: 100%; padding: 8px; margin-bottom: 10px; box-sizing: border-box; }
+        
+        /* Wygląd nagłówka, który służy do zwijania menu */
+        #ui-header {
+            background-color: #343a40; color: white; padding: 15px;
+            border-radius: 8px; cursor: pointer;
+            display: flex; justify-content: space-between; align-items: center;
+            font-weight: bold; font-size: 16px;
+        }
+        
+        /* Zaokrąglenie tylko górnych rogów, gdy panel jest rozwinięty */
+        #ui-panel:not(.collapsed) #ui-header {
+            border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+        }
+
+        #ui-content { padding: 15px; }
+        /* Klasa ukrywająca zawartość */
+        .hidden { display: none !important; }
+        
+        #address-input { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;}
         
         button {
             width: 100%; padding: 10px; color: white;
@@ -32,25 +52,32 @@
         .btn-danger { background-color: #dc3545; }
         .btn-danger:hover { background-color: #c82333; }
         
-        #points-list { margin-top: 15px; padding-left: 20px; font-size: 14px; }
+        #points-list { margin-top: 10px; padding-left: 20px; font-size: 14px; max-height: 150px; overflow-y: auto; }
         hr { border: 0; height: 1px; background: #ddd; margin: 15px 0; }
     </style>
 </head>
 <body>
 
     <div id="ui-panel">
-        <h3>Dodaj punkt</h3>
-        <input type="text" id="address-input" placeholder="np. Wawel 5, Kraków">
-        <button class="btn-primary" onclick="addAddress()">Znajdź i dodaj</button>
+        <div id="ui-header" onclick="togglePanel()">
+            <span>Menu Trasy</span>
+            <span id="toggle-icon">▼</span>
+        </div>
         
-        <button class="btn-success" onclick="optimizeRoute()">Wyznacz trasę</button>
-        
-        <hr>
-        
-        <button id="track-btn" class="btn-warning" onclick="toggleTracking()">📍 Rozpocznij śledzenie GPS</button>
-        
-        <h4>Lista adresów:</h4>
-        <ul id="points-list"></ul>
+        <div id="ui-content">
+            <input type="text" id="address-input" placeholder="np. Wawel 5, Kraków">
+            <button class="btn-primary" onclick="addAddress()">➕ Znajdź i dodaj</button>
+            <button class="btn-success" onclick="optimizeRoute()">🛣️ Wyznacz trasę</button>
+            
+            <hr>
+            
+            <button id="track-btn" class="btn-warning" onclick="toggleTracking()">📍 Rozpocznij śledzenie GPS</button>
+            
+            <h4 style="margin-bottom: 5px;">Lista adresów:</h4>
+            <ul id="points-list"></ul>
+            
+            <button class="btn-danger" style="margin-top: 10px; background-color: #6c757d;" onclick="clearAll()">🗑️ Wyczyść wszystko</button>
+        </div>
     </div>
 
     <div id="map"></div>
@@ -58,7 +85,11 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
-        const map = L.map('map').setView([51.9194, 19.1451], 6);
+        const map = L.map('map', { zoomControl: false }).setView([51.9194, 19.1451], 6);
+        
+        // Przenosimy przyciski przybliżania (zoom) na lewą stronę, żeby nie chowały się pod naszym panelem
+        L.control.zoom({ position: 'topleft' }).addTo(map);
+
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap contributors'
@@ -66,10 +97,29 @@
 
         let deliveryPoints = [];
         let routeLayer = null; 
+        
+        // NOWOŚĆ: Grupa na znaczniki adresów (ułatwia ich późniejsze usuwanie)
+        let markersLayer = L.layerGroup().addTo(map);
 
-        // Zmienne dla GPS
         let trackingId = null;
         let courierMarker = null;
+
+        // Funkcja do zwijania/rozwijania panelu
+        function togglePanel() {
+            const content = document.getElementById('ui-content');
+            const icon = document.getElementById('toggle-icon');
+            const panel = document.getElementById('ui-panel');
+            
+            if (content.classList.contains('hidden')) {
+                content.classList.remove('hidden');
+                panel.classList.remove('collapsed');
+                icon.innerText = '▼';
+            } else {
+                content.classList.add('hidden');
+                panel.classList.add('collapsed');
+                icon.innerText = '▲';
+            }
+        }
 
         async function addAddress() {
             const address = document.getElementById('address-input').value;
@@ -82,8 +132,11 @@
                     const lat = parseFloat(data[0].lat);
                     const lon = parseFloat(data[0].lon);
                     const displayName = data[0].display_name;
-                    L.marker([lat, lon]).addTo(map).bindPopup(displayName);
+                    
+                    // Dodajemy znacznik do naszej grupy (markersLayer) zamiast bezpośrednio do mapy
+                    L.marker([lat, lon]).addTo(markersLayer).bindPopup(displayName);
                     map.setView([lat, lon], 13);
+                    
                     deliveryPoints.push({ lat: lat, lon: lon, name: displayName });
                     updateListUI();
                     document.getElementById('address-input').value = '';
@@ -123,6 +176,11 @@
                         style: { color: '#007bff', weight: 5, opacity: 0.7 }
                     }).addTo(map);
                     map.fitBounds(routeLayer.getBounds());
+                    
+                    // NOWOŚĆ: Automatyczne zwinięcie panelu na telefonach po narysowaniu trasy
+                    if (window.innerWidth < 768) {
+                        togglePanel();
+                    }
                 } else {
                     alert("Nie udało się wyznaczyć trasy.");
                 }
@@ -131,17 +189,27 @@
             }
         }
 
-        // 5. NOWA FUNKCJA: Obsługa GPS
+        // NOWOŚĆ: Czyszczenie wszystkich danych
+        function clearAll() {
+            if (confirm("Czy na pewno chcesz usunąć całą trasę i zacząć od nowa?")) {
+                deliveryPoints = []; // Reset tablicy
+                updateListUI(); // Wyczyść listę na ekranie
+                markersLayer.clearLayers(); // Usuń wszystkie pinezki z adresami
+                if (routeLayer) {
+                    map.removeLayer(routeLayer); // Usuń narysowaną linię trasy
+                    routeLayer = null;
+                }
+            }
+        }
+
         function toggleTracking() {
             if (!navigator.geolocation) {
                 alert("Twoja przeglądarka nie obsługuje geolokalizacji.");
                 return;
             }
-
             const btn = document.getElementById('track-btn');
 
             if (trackingId) {
-                // Jeśli śledzenie jest włączone, wyłączamy je
                 navigator.geolocation.clearWatch(trackingId);
                 trackingId = null;
                 if (courierMarker) {
@@ -151,36 +219,26 @@
                 btn.innerText = "📍 Rozpocznij śledzenie GPS";
                 btn.className = "btn-warning";
             } else {
-                // Włączamy śledzenie
                 btn.innerText = "⏹ Zakończ śledzenie";
                 btn.className = "btn-danger";
-
-                // Opcje: wysoka dokładność pobiera dane prosto z modułu satelitarnego GPS (dobre dla telefonów)
                 const options = { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 };
 
                 trackingId = navigator.geolocation.watchPosition(
                     (position) => {
                         const lat = position.coords.latitude;
                         const lon = position.coords.longitude;
-
                         if (!courierMarker) {
-                            // Rysujemy pozycję kuriera jako czerwone kółko z pulsującym wyglądem
                             courierMarker = L.circleMarker([lat, lon], {
-                                color: '#dc3545',
-                                fillColor: '#dc3545',
-                                fillOpacity: 1,
-                                radius: 8
+                                color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8
                             }).addTo(map);
                             map.setView([lat, lon], 16);
                         } else {
-                            // Kurier się poruszył - przesuwamy kółko
                             courierMarker.setLatLng([lat, lon]);
                         }
                     },
                     (error) => {
                         console.error("Błąd GPS:", error);
-                        alert("Brak dostępu do lokalizacji. Zezwól stronie na używanie GPS w ustawieniach przeglądarki.");
-                        // Reset przycisku w razie błędu
+                        alert("Brak dostępu do lokalizacji.");
                         navigator.geolocation.clearWatch(trackingId);
                         trackingId = null;
                         btn.innerText = "📍 Rozpocznij śledzenie GPS";
