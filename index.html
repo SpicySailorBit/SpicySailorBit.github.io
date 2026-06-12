@@ -17,20 +17,21 @@
             box-shadow: 0 4px 15px rgba(0,0,0,0.3); 
             width: 320px; max-width: 90vw;
             display: flex; flex-direction: column;
+            max-height: 95vh; overflow-y: auto; /* Pozwala na przewijanie panelu na bardzo małych ekranach */
         }
         
         #ui-header {
             background-color: #343a40; color: white; padding: 15px;
             border-radius: 8px; cursor: pointer;
             display: flex; justify-content: space-between; align-items: center;
-            font-weight: bold; font-size: 16px;
+            font-weight: bold; font-size: 16px; position: sticky; top: 0; z-index: 2;
         }
         
         #ui-panel:not(.collapsed) #ui-header { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
         #ui-content { padding: 15px; }
         .hidden { display: none !important; }
         
-        #address-input { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;}
+        input[type="text"] { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;}
         
         button {
             width: 100%; padding: 10px; color: white;
@@ -44,25 +45,26 @@
         .btn-warning:hover { background-color: #e0a800; }
         .btn-danger { background-color: #dc3545; }
         .btn-danger:hover { background-color: #c82333; }
+        .btn-info { background-color: #17a2b8; }
+        .btn-info:hover { background-color: #138496; }
         
-        #points-list { margin-top: 10px; padding-left: 20px; font-size: 14px; max-height: 150px; overflow-y: auto; }
+        #points-list { margin-top: 10px; padding-left: 20px; font-size: 14px; max-height: 100px; overflow-y: auto; }
         hr { border: 0; height: 1px; background: #ddd; margin: 15px 0; }
 
-        /* Style dla ponumerowanych znaczników */
         .custom-marker {
-            background-color: #007bff; /* Niebieski dla punktów */
-            color: white;
-            border-radius: 50%;
-            text-align: center;
-            line-height: 28px;
-            font-size: 14px;
-            font-weight: bold;
-            border: 2px solid white;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+            background-color: #007bff; color: white; border-radius: 50%;
+            text-align: center; line-height: 28px; font-size: 14px;
+            font-weight: bold; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.5);
         }
-        .custom-marker.baza {
-            background-color: #28a745; /* Zielony dla bazy */
-        }
+        .custom-marker.baza { background-color: #28a745; }
+
+        /* Style dla listy stałych adresów */
+        details { background: #f8f9fa; padding: 10px; border-radius: 4px; border: 1px solid #ddd; margin-bottom: 15px; }
+        summary { font-weight: bold; cursor: pointer; outline: none; margin-bottom: 5px; }
+        #saved-points-list { list-style: none; padding-left: 0; max-height: 150px; overflow-y: auto; margin-top: 10px; }
+        .saved-item { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 8px; background: white; padding: 5px; border-radius: 4px; border: 1px solid #eee;}
+        .saved-item span.name { flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .saved-item span.delete { color: #dc3545; cursor: pointer; font-weight: bold; padding: 0 5px; }
     </style>
 </head>
 <body>
@@ -75,17 +77,30 @@
         
         <div id="ui-content">
             <input type="text" id="address-input" placeholder="np. Wawel 5, Kraków">
-            <button class="btn-primary" onclick="addAddress()">➕ Znajdź i dodaj</button>
+            <button class="btn-primary" onclick="addAddress()">➕ Dodaj do trasy</button>
+            
+            <details>
+                <summary>📂 Stałe adresy (Zapisane)</summary>
+                <div style="margin-top: 10px;">
+                    <input type="text" id="saved-address-input" placeholder="Dodaj nowy stały adres">
+                    <button class="btn-info" onclick="savePermanentAddress()">💾 Zapisz w stałych</button>
+                    
+                    <ul id="saved-points-list"></ul>
+                    
+                    <button class="btn-success" style="margin-bottom: 0;" onclick="addSelectedSaved()">✔️ Dodaj zaznaczone do trasy</button>
+                </div>
+            </details>
+            
             <button class="btn-success" onclick="optimizeRoute()">🛣️ Wyznacz trasę</button>
             
             <hr>
             
             <button id="track-btn" class="btn-warning" onclick="toggleTracking()">📍 Rozpocznij śledzenie GPS</button>
             
-            <h4 style="margin-bottom: 5px;">Lista adresów:</h4>
+            <h4 style="margin-bottom: 5px; margin-top: 10px;">Lista adresów na mapie:</h4>
             <ul id="points-list"></ul>
             
-            <button class="btn-danger" style="margin-top: 10px; background-color: #6c757d;" onclick="clearAll()">🗑️ Wyczyść wszystko</button>
+            <button class="btn-danger" style="margin-top: 10px; background-color: #6c757d;" onclick="clearAll()">🗑️ Wyczyść mapę</button>
         </div>
     </div>
 
@@ -94,13 +109,8 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
-        // Zmiana: zoomControl na false usuwa przyciski + i -
         const map = L.map('map', { zoomControl: false }).setView([51.9194, 19.1451], 6);
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
         let deliveryPoints = [];
         let routeLayer = null; 
@@ -108,19 +118,18 @@
         let trackingId = null;
         let courierMarker = null;
 
+        // Pobieramy stałe adresy z pamięci przeglądarki (lub tworzymy pustą listę)
+        let savedAddresses = JSON.parse(localStorage.getItem('courierSavedAddresses')) || [];
+
         function togglePanel() {
             const content = document.getElementById('ui-content');
             const icon = document.getElementById('toggle-icon');
             const panel = document.getElementById('ui-panel');
             
             if (content.classList.contains('hidden')) {
-                content.classList.remove('hidden');
-                panel.classList.remove('collapsed');
-                icon.innerText = '▼';
+                content.classList.remove('hidden'); panel.classList.remove('collapsed'); icon.innerText = '▼';
             } else {
-                content.classList.add('hidden');
-                panel.classList.add('collapsed');
-                icon.innerText = '▲';
+                content.classList.add('hidden'); panel.classList.add('collapsed'); icon.innerText = '▲';
             }
         }
 
@@ -132,24 +141,19 @@
                 const response = await fetch(url);
                 const data = await response.json();
                 if (data && data.length > 0) {
-                    const lat = parseFloat(data[0].lat);
-                    const lon = parseFloat(data[0].lon);
-                    const displayName = data[0].display_name;
-                    
-                    // Zwykły znacznik przed optymalizacją
-                    L.marker([lat, lon]).addTo(markersLayer).bindPopup(displayName);
-                    map.setView([lat, lon], 13);
-                    
-                    deliveryPoints.push({ lat: lat, lon: lon, name: displayName });
-                    updateListUI();
+                    const lat = parseFloat(data[0].lat); const lon = parseFloat(data[0].lon); const name = data[0].display_name;
+                    addPointToMapAndList(lat, lon, name);
                     document.getElementById('address-input').value = '';
-                } else {
-                    alert("Nie udało się znaleźć adresu.");
-                }
-            } catch (error) {
-                console.error("Błąd API:", error);
-                alert("Wystąpił problem z połączeniem.");
-            }
+                } else { alert("Nie udało się znaleźć adresu."); }
+            } catch (error) { alert("Wystąpił problem z połączeniem."); }
+        }
+
+        // Funkcja pomocnicza do dodawania na mapę
+        function addPointToMapAndList(lat, lon, name) {
+            L.marker([lat, lon]).addTo(markersLayer).bindPopup(name);
+            map.setView([lat, lon], 13);
+            deliveryPoints.push({ lat: lat, lon: lon, name: name });
+            updateListUI();
         }
 
         function updateListUI() {
@@ -163,11 +167,71 @@
             });
         }
 
-        async function optimizeRoute() {
-            if (deliveryPoints.length < 2) {
-                alert("Musisz dodać co najmniej 2 punkty!");
+        // NOWE FUNKCJE: Zarządzanie stałymi adresami
+        function renderSavedAddresses() {
+            const list = document.getElementById('saved-points-list');
+            list.innerHTML = '';
+            savedAddresses.forEach((pt, index) => {
+                const shortName = pt.name.split(',')[0] + ', ' + pt.name.split(',')[1];
+                const li = document.createElement('li');
+                li.className = 'saved-item';
+                li.innerHTML = `
+                    <input type="checkbox" class="saved-checkbox" value="${index}">
+                    <span class="name" title="${pt.name}">${shortName}</span>
+                    <span class="delete" onclick="deleteSavedAddress(${index})" title="Usuń ze stałych">✖</span>
+                `;
+                list.appendChild(li);
+            });
+        }
+
+        async function savePermanentAddress() {
+            const address = document.getElementById('saved-address-input').value;
+            if (!address) return;
+            
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                if (data && data.length > 0) {
+                    const newSaved = {
+                        lat: parseFloat(data[0].lat),
+                        lon: parseFloat(data[0].lon),
+                        name: data[0].display_name
+                    };
+                    savedAddresses.push(newSaved);
+                    // Zapisujemy do pamięci przeglądarki
+                    localStorage.setItem('courierSavedAddresses', JSON.stringify(savedAddresses));
+                    renderSavedAddresses();
+                    document.getElementById('saved-address-input').value = '';
+                    alert("Adres został zapisany w stałych!");
+                } else { alert("Nie udało się znaleźć tego adresu."); }
+            } catch (error) { alert("Błąd połączenia."); }
+        }
+
+        function addSelectedSaved() {
+            const checkboxes = document.querySelectorAll('.saved-checkbox:checked');
+            if(checkboxes.length === 0) {
+                alert("Zaznacz najpierw adresy, które chcesz dodać.");
                 return;
             }
+            
+            checkboxes.forEach(cb => {
+                const pt = savedAddresses[cb.value];
+                addPointToMapAndList(pt.lat, pt.lon, pt.name);
+                cb.checked = false; // Odznacz po dodaniu
+            });
+        }
+
+        function deleteSavedAddress(index) {
+            if(confirm("Czy na pewno chcesz usunąć ten adres ze stałych?")) {
+                savedAddresses.splice(index, 1);
+                localStorage.setItem('courierSavedAddresses', JSON.stringify(savedAddresses));
+                renderSavedAddresses();
+            }
+        }
+
+        async function optimizeRoute() {
+            if (deliveryPoints.length < 2) { alert("Musisz dodać co najmniej 2 punkty!"); return; }
             const coordinatesString = deliveryPoints.map(p => `${p.lon},${p.lat}`).join(';');
             const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordinatesString}?source=first&roundtrip=true&overview=full&geometries=geojson`;
             try {
@@ -175,110 +239,56 @@
                 const data = await response.json();
                 if (data.code === 'Ok') {
                     if (routeLayer) map.removeLayer(routeLayer);
-                    routeLayer = L.geoJSON(data.trips[0].geometry, {
-                        style: { color: '#007bff', weight: 5, opacity: 0.7 }
-                    }).addTo(map);
-                    
-                    // NOWOŚĆ: Czyszczenie starych, niebieskich znaczników
+                    routeLayer = L.geoJSON(data.trips[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
                     markersLayer.clearLayers();
-
-                    // NOWOŚĆ: Dodawanie ponumerowanych znaczników w optymalnej kolejności
                     deliveryPoints.forEach((point, index) => {
-                        // OSRM zwraca zoptymalizowany indeks (0, 1, 2...)
                         const optIndex = data.waypoints[index].waypoint_index;
                         const isBase = optIndex === 0;
                         const label = isBase ? 'B' : optIndex;
-
-                        // Tworzenie naszej okrągłej ikony z CSS
                         const customIcon = L.divIcon({
-                            className: isBase ? 'custom-marker baza' : 'custom-marker',
-                            html: label,
-                            iconSize: [32, 32],
-                            iconAnchor: [16, 16] // Środek ikony dokładnie na współrzędnych
+                            className: isBase ? 'custom-marker baza' : 'custom-marker', html: label, iconSize: [32, 32], iconAnchor: [16, 16]
                         });
-
-                        L.marker([point.lat, point.lon], { icon: customIcon })
-                            .addTo(markersLayer)
-                            .bindPopup(`<b>Kolejność: ${isBase ? 'Baza' : optIndex}</b><br>${point.name}`);
+                        L.marker([point.lat, point.lon], { icon: customIcon }).addTo(markersLayer).bindPopup(`<b>Kolejność: ${isBase ? 'Baza' : optIndex}</b><br>${point.name}`);
                     });
-
-                    // Jeśli śledzenie GPS nie jest włączone, dopasuj widok do całej trasy
-                    if (!trackingId) {
-                        map.fitBounds(routeLayer.getBounds());
-                    }
-                    
-                    if (window.innerWidth < 768) {
-                        togglePanel();
-                    }
-                } else {
-                    alert("Nie udało się wyznaczyć trasy.");
-                }
-            } catch (error) {
-                console.error("Błąd routingu:", error);
-            }
+                    if (!trackingId) map.fitBounds(routeLayer.getBounds());
+                    if (window.innerWidth < 768) togglePanel();
+                } else { alert("Nie udało się wyznaczyć trasy."); }
+            } catch (error) { console.error("Błąd routingu:", error); }
         }
 
         function clearAll() {
-            if (confirm("Czy na pewno chcesz usunąć całą trasę i zacząć od nowa?")) {
-                deliveryPoints = []; 
-                updateListUI(); 
-                markersLayer.clearLayers(); 
-                if (routeLayer) {
-                    map.removeLayer(routeLayer); 
-                    routeLayer = null;
-                }
+            if (confirm("Usunąć trasę z mapy? (Stałe adresy pozostaną zapisane)")) {
+                deliveryPoints = []; updateListUI(); markersLayer.clearLayers();
+                if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
             }
         }
 
         function toggleTracking() {
-            if (!navigator.geolocation) {
-                alert("Twoja przeglądarka nie obsługuje geolokalizacji.");
-                return;
-            }
+            if (!navigator.geolocation) { alert("Brak obsługi GPS."); return; }
             const btn = document.getElementById('track-btn');
-
             if (trackingId) {
-                navigator.geolocation.clearWatch(trackingId);
-                trackingId = null;
-                if (courierMarker) {
-                    map.removeLayer(courierMarker);
-                    courierMarker = null;
-                }
-                btn.innerText = "📍 Rozpocznij śledzenie GPS";
-                btn.className = "btn-warning";
+                navigator.geolocation.clearWatch(trackingId); trackingId = null;
+                if (courierMarker) { map.removeLayer(courierMarker); courierMarker = null; }
+                btn.innerText = "📍 Rozpocznij śledzenie GPS"; btn.className = "btn-warning";
             } else {
-                btn.innerText = "⏹ Zakończ śledzenie";
-                btn.className = "btn-danger";
-                const options = { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 };
-
+                btn.innerText = "⏹ Zakończ śledzenie"; btn.className = "btn-danger";
                 trackingId = navigator.geolocation.watchPosition(
                     (position) => {
-                        const lat = position.coords.latitude;
-                        const lon = position.coords.longitude;
-                        if (!courierMarker) {
-                            courierMarker = L.circleMarker([lat, lon], {
-                                color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8
-                            }).addTo(map);
-                        } else {
-                            courierMarker.setLatLng([lat, lon]);
-                        }
-                        
-                        // NOWOŚĆ: Automatyczne podążanie kamery za czerwoną kropką
+                        const lat = position.coords.latitude; const lon = position.coords.longitude;
+                        if (!courierMarker) { courierMarker = L.circleMarker([lat, lon], { color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8 }).addTo(map); } 
+                        else { courierMarker.setLatLng([lat, lon]); }
                         map.panTo([lat, lon]);
-                        // Opcjonalnie możemy też wymusić zbliżenie: map.setView([lat, lon], 16);
                     },
                     (error) => {
-                        console.error("Błąd GPS:", error);
-                        alert("Brak dostępu do lokalizacji.");
-                        navigator.geolocation.clearWatch(trackingId);
-                        trackingId = null;
-                        btn.innerText = "📍 Rozpocznij śledzenie GPS";
-                        btn.className = "btn-warning";
-                    },
-                    options
+                        alert("Brak dostępu do lokalizacji."); navigator.geolocation.clearWatch(trackingId); trackingId = null;
+                        btn.innerText = "📍 Rozpocznij śledzenie GPS"; btn.className = "btn-warning";
+                    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
                 );
             }
         }
+
+        // Uruchomienie ładowania stałych adresów przy starcie aplikacji
+        renderSavedAddresses();
     </script>
 </body>
 </html>
