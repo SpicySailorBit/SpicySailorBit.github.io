@@ -21,24 +21,33 @@
         
         button {
             width: 100%; padding: 10px; color: white;
-            border: none; border-radius: 4px; cursor: pointer; font-weight: bold;
+            border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px;
         }
         .btn-primary { background-color: #007bff; }
         .btn-primary:hover { background-color: #0056b3; }
-        .btn-success { background-color: #28a745; margin-top: 10px; }
+        .btn-success { background-color: #28a745; }
         .btn-success:hover { background-color: #218838; }
+        .btn-warning { background-color: #ffc107; color: #212529; }
+        .btn-warning:hover { background-color: #e0a800; }
+        .btn-danger { background-color: #dc3545; }
+        .btn-danger:hover { background-color: #c82333; }
         
         #points-list { margin-top: 15px; padding-left: 20px; font-size: 14px; }
+        hr { border: 0; height: 1px; background: #ddd; margin: 15px 0; }
     </style>
 </head>
 <body>
 
     <div id="ui-panel">
-        <h3>Dodaj punkt na trasie</h3>
+        <h3>Dodaj punkt</h3>
         <input type="text" id="address-input" placeholder="np. Wawel 5, Kraków">
         <button class="btn-primary" onclick="addAddress()">Znajdź i dodaj</button>
         
-        <button class="btn-success" onclick="optimizeRoute()">Wyznacz zoptymalizowaną trasę</button>
+        <button class="btn-success" onclick="optimizeRoute()">Wyznacz trasę</button>
+        
+        <hr>
+        
+        <button id="track-btn" class="btn-warning" onclick="toggleTracking()">📍 Rozpocznij śledzenie GPS</button>
         
         <h4>Lista adresów:</h4>
         <ul id="points-list"></ul>
@@ -56,26 +65,25 @@
         }).addTo(map);
 
         let deliveryPoints = [];
-        let routeLayer = null; // Zmienna przechowująca narysowaną linię trasy
+        let routeLayer = null; 
+
+        // Zmienne dla GPS
+        let trackingId = null;
+        let courierMarker = null;
 
         async function addAddress() {
             const address = document.getElementById('address-input').value;
             if (!address) return;
-
             const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
-
             try {
                 const response = await fetch(url);
                 const data = await response.json();
-
                 if (data && data.length > 0) {
                     const lat = parseFloat(data[0].lat);
                     const lon = parseFloat(data[0].lon);
                     const displayName = data[0].display_name;
-
                     L.marker([lat, lon]).addTo(map).bindPopup(displayName);
                     map.setView([lat, lon], 13);
-
                     deliveryPoints.push({ lat: lat, lon: lon, name: displayName });
                     updateListUI();
                     document.getElementById('address-input').value = '';
@@ -94,56 +102,92 @@
             deliveryPoints.forEach((point, index) => {
                 const li = document.createElement('li');
                 const shortName = point.name.split(',')[0] + ', ' + point.name.split(',')[1];
-                // Dodajemy numerację, żeby wiedzieć, który punkt był pierwszy (baza)
                 li.innerText = `${index === 0 ? '[BAZA] ' : ''}${shortName}`;
                 listElement.appendChild(li);
             });
         }
 
-        // 4. NOWA FUNKCJA: Optymalizacja i rysowanie trasy
         async function optimizeRoute() {
             if (deliveryPoints.length < 2) {
-                alert("Musisz dodać co najmniej 2 punkty, aby wyznaczyć trasę!");
+                alert("Musisz dodać co najmniej 2 punkty!");
                 return;
             }
-
-            // OSRM wymaga współrzędnych w formacie: dlugosc,szerokosc;dlugosc,szerokosc... (lon,lat)
             const coordinatesString = deliveryPoints.map(p => `${p.lon},${p.lat}`).join(';');
-
-            // Budujemy URL do API OSRM (funkcja 'trip' automatycznie układa punkty w optymalnej kolejności)
-            // source=first oznacza, że pierwszy punkt to start, roundtrip=true oznacza powrót do bazy
             const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordinatesString}?source=first&roundtrip=true&overview=full&geometries=geojson`;
-
             try {
                 const response = await fetch(osrmUrl);
                 const data = await response.json();
-
                 if (data.code === 'Ok') {
-                    // Jeśli na mapie jest już narysowana stara trasa, usuwamy ją
-                    if (routeLayer) {
-                        map.removeLayer(routeLayer);
-                    }
-
-                    // Pobieramy kształt trasy z odpowiedzi serwera (GeoJSON)
-                    const routeGeoJSON = data.trips[0].geometry;
-
-                    // Rysujemy nową linię na mapie (na niebiesko z lekką przezroczystością)
-                    routeLayer = L.geoJSON(routeGeoJSON, {
-                        style: {
-                            color: '#007bff',
-                            weight: 5,
-                            opacity: 0.7
-                        }
+                    if (routeLayer) map.removeLayer(routeLayer);
+                    routeLayer = L.geoJSON(data.trips[0].geometry, {
+                        style: { color: '#007bff', weight: 5, opacity: 0.7 }
                     }).addTo(map);
-
-                    // Dopasowujemy widok mapy tak, aby cała trasa zmieściła się na ekranie
                     map.fitBounds(routeLayer.getBounds());
                 } else {
-                    alert("Nie udało się wyznaczyć trasy. Sprawdź, czy punkty nie są zbyt daleko od dróg.");
+                    alert("Nie udało się wyznaczyć trasy.");
                 }
             } catch (error) {
                 console.error("Błąd routingu:", error);
-                alert("Wystąpił błąd podczas obliczania trasy.");
+            }
+        }
+
+        // 5. NOWA FUNKCJA: Obsługa GPS
+        function toggleTracking() {
+            if (!navigator.geolocation) {
+                alert("Twoja przeglądarka nie obsługuje geolokalizacji.");
+                return;
+            }
+
+            const btn = document.getElementById('track-btn');
+
+            if (trackingId) {
+                // Jeśli śledzenie jest włączone, wyłączamy je
+                navigator.geolocation.clearWatch(trackingId);
+                trackingId = null;
+                if (courierMarker) {
+                    map.removeLayer(courierMarker);
+                    courierMarker = null;
+                }
+                btn.innerText = "📍 Rozpocznij śledzenie GPS";
+                btn.className = "btn-warning";
+            } else {
+                // Włączamy śledzenie
+                btn.innerText = "⏹ Zakończ śledzenie";
+                btn.className = "btn-danger";
+
+                // Opcje: wysoka dokładność pobiera dane prosto z modułu satelitarnego GPS (dobre dla telefonów)
+                const options = { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 };
+
+                trackingId = navigator.geolocation.watchPosition(
+                    (position) => {
+                        const lat = position.coords.latitude;
+                        const lon = position.coords.longitude;
+
+                        if (!courierMarker) {
+                            // Rysujemy pozycję kuriera jako czerwone kółko z pulsującym wyglądem
+                            courierMarker = L.circleMarker([lat, lon], {
+                                color: '#dc3545',
+                                fillColor: '#dc3545',
+                                fillOpacity: 1,
+                                radius: 8
+                            }).addTo(map);
+                            map.setView([lat, lon], 16);
+                        } else {
+                            // Kurier się poruszył - przesuwamy kółko
+                            courierMarker.setLatLng([lat, lon]);
+                        }
+                    },
+                    (error) => {
+                        console.error("Błąd GPS:", error);
+                        alert("Brak dostępu do lokalizacji. Zezwól stronie na używanie GPS w ustawieniach przeglądarki.");
+                        // Reset przycisku w razie błędu
+                        navigator.geolocation.clearWatch(trackingId);
+                        trackingId = null;
+                        btn.innerText = "📍 Rozpocznij śledzenie GPS";
+                        btn.className = "btn-warning";
+                    },
+                    options
+                );
             }
         }
     </script>
