@@ -8,38 +8,142 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <style>
-        /* Usuwamy domyślne marginesy i rozciągamy mapę na całe okno */
         body, html {
             margin: 0;
             padding: 0;
             height: 100%;
+            font-family: Arial, sans-serif;
         }
         #map {
             width: 100%;
             height: 100vh;
+            z-index: 1; /* Mapa jest na samym dole */
+        }
+        /* Styl dla naszego panelu sterowania */
+        #ui-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000; /* Panel musi być nad mapą */
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            width: 300px;
+        }
+        #ui-panel h3 {
+            margin-top: 0;
+        }
+        #address-input {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #points-list {
+            margin-top: 15px;
+            padding-left: 20px;
+            font-size: 14px;
         }
     </style>
 </head>
 <body>
+
+    <div id="ui-panel">
+        <h3>Dodaj punkt na trasie</h3>
+        <input type="text" id="address-input" placeholder="np. Wawel 5, Kraków">
+        <button onclick="addAddress()">Znajdź i dodaj</button>
+        
+        <h4>Lista adresów:</h4>
+        <ul id="points-list"></ul>
+    </div>
 
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
-        // 1. Inicjalizacja mapy: ustawiamy środek na Polskę i przybliżenie (zoom) na 6
+        // 1. Inicjalizacja mapy
         const map = L.map('map').setView([51.9194, 19.1451], 6);
-
-        // 2. Pobranie darmowych kafelków (wyglądu) z OpenStreetMap
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        // 3. Dodanie testowego znacznika na mapie
-        L.marker([51.9194, 19.1451]).addTo(map)
-            .bindPopup('Witaj w Twojej nowej aplikacji kurierskiej!')
-            .openPopup();
+        // Tablica na nasze adresy
+        let deliveryPoints = [];
+
+        // 2. Funkcja szukająca adresu (Geokodowanie)
+        async function addAddress() {
+            const address = document.getElementById('address-input').value;
+            if (!address) return; // Jeśli pole jest puste, nic nie rób
+
+            // Budujemy URL do API Nominatim
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
+
+            try {
+                // Wysyłamy zapytanie do serwera i czekamy na odpowiedź
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data && data.length > 0) {
+                    // Pobieramy współrzędne z pierwszego (najlepszego) wyniku
+                    const lat = parseFloat(data[0].lat);
+                    const lon = parseFloat(data[0].lon);
+                    const displayName = data[0].display_name;
+
+                    // Tworzymy znacznik i dodajemy na mapę
+                    const marker = L.marker([lat, lon]).addTo(map);
+                    marker.bindPopup(displayName);
+
+                    // Wyśrodkowujemy mapę na nowym punkcie
+                    map.setView([lat, lon], 14);
+
+                    // Zapisujemy punkt do naszej wirtualnej "bazy danych" (tablicy)
+                    deliveryPoints.push({
+                        lat: lat,
+                        lon: lon,
+                        name: displayName
+                    });
+
+                    // Aktualizujemy tekstową listę w panelu i czyścimy pole wpisywania
+                    updateListUI();
+                    document.getElementById('address-input').value = '';
+                } else {
+                    alert("Nie udało się znaleźć takiego adresu. Spróbuj wpisać go inaczej (np. ulica numer, miasto).");
+                }
+            } catch (error) {
+                console.error("Błąd API:", error);
+                alert("Wystąpił problem z połączeniem.");
+            }
+        }
+
+        // 3. Funkcja odświeżająca listę w interfejsie
+        function updateListUI() {
+            const listElement = document.getElementById('points-list');
+            listElement.innerHTML = ''; // Czyścimy obecną listę
+
+            // Rysujemy listę na nowo na podstawie tablicy deliveryPoints
+            deliveryPoints.forEach((point, index) => {
+                const li = document.createElement('li');
+                // Rozdzielamy długą nazwę po przecinku, żeby nie zaśmiecać widoku
+                const shortName = point.name.split(',')[0] + ', ' + point.name.split(',')[1];
+                li.innerText = shortName;
+                listElement.appendChild(li);
+            });
+        }
     </script>
 </body>
 </html>
