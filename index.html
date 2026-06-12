@@ -3,30 +3,43 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mój Prywatny Notatnik</title>
-    <link rel="stylesheet" href="style.css">
+    <title>Planer Trasy Kuriera</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        /* Usuwamy domyślne marginesy i rozciągamy mapę na całe okno */
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
+        #map {
+            width: 100%;
+            height: 100vh;
+        }
+    </style>
 </head>
 <body>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
-    <div class="container">
-        <!-- Górny pasek z tytułem i logowaniem -->
-        <header>
-            <h1>Mój Notatnik</h1>
-            <button id="login-btn" class="btn-outline">Zaloguj przez Google</button>
-        </header>
+    <script>
+        // 1. Inicjalizacja mapy: ustawiamy środek na Polskę i przybliżenie (zoom) na 6
+        const map = L.map('map').setView([51.9194, 19.1451], 6);
 
-        <!-- Główna sekcja notatnika -->
-        <main>
-            <!-- Miejsce do wpisywania tekstu -->
-            <textarea id="note-area" placeholder="Zacznij pisać swoją notatkę tutaj..."></textarea>
-            
-            <!-- Przyciski akcji -->
-            <div class="actions">
-                <button id="save-btn" class="btn-primary">Zapisz na Dysku</button>
-                <button id="clear-btn" class="btn-secondary">Wyczyść ekran</button>
-            </div>
-        </main>
-    </div>
+        // 2. Pobranie darmowych kafelków (wyglądu) z OpenStreetMap
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
 
+        // 3. Dodanie testowego znacznika na mapie
+        L.marker([51.9194, 19.1451]).addTo(map)
+            .bindPopup('Witaj w Twojej nowej aplikacji kurierskiej!')
+            .openPopup();
+    </script>
 </body>
 </html>
