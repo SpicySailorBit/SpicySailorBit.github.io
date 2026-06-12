@@ -8,55 +8,27 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            height: 100%;
-            font-family: Arial, sans-serif;
-        }
-        #map {
-            width: 100%;
-            height: 100vh;
-            z-index: 1; /* Mapa jest na samym dole */
-        }
-        /* Styl dla naszego panelu sterowania */
+        body, html { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; }
+        #map { width: 100%; height: 100vh; z-index: 1; }
+        
         #ui-panel {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            z-index: 1000; /* Panel musi być nad mapą */
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-            width: 300px;
+            position: absolute; top: 20px; right: 20px; z-index: 1000;
+            background: white; padding: 20px; border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); width: 300px;
         }
-        #ui-panel h3 {
-            margin-top: 0;
-        }
-        #address-input {
-            width: 100%;
-            padding: 8px;
-            margin-bottom: 10px;
-            box-sizing: border-box;
-        }
+        #ui-panel h3 { margin-top: 0; }
+        #address-input { width: 100%; padding: 8px; margin-bottom: 10px; box-sizing: border-box; }
+        
         button {
-            width: 100%;
-            padding: 10px;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
+            width: 100%; padding: 10px; color: white;
+            border: none; border-radius: 4px; cursor: pointer; font-weight: bold;
         }
-        button:hover {
-            background-color: #0056b3;
-        }
-        #points-list {
-            margin-top: 15px;
-            padding-left: 20px;
-            font-size: 14px;
-        }
+        .btn-primary { background-color: #007bff; }
+        .btn-primary:hover { background-color: #0056b3; }
+        .btn-success { background-color: #28a745; margin-top: 10px; }
+        .btn-success:hover { background-color: #218838; }
+        
+        #points-list { margin-top: 15px; padding-left: 20px; font-size: 14px; }
     </style>
 </head>
 <body>
@@ -64,7 +36,9 @@
     <div id="ui-panel">
         <h3>Dodaj punkt na trasie</h3>
         <input type="text" id="address-input" placeholder="np. Wawel 5, Kraków">
-        <button onclick="addAddress()">Znajdź i dodaj</button>
+        <button class="btn-primary" onclick="addAddress()">Znajdź i dodaj</button>
+        
+        <button class="btn-success" onclick="optimizeRoute()">Wyznacz zoptymalizowaną trasę</button>
         
         <h4>Lista adresów:</h4>
         <ul id="points-list"></ul>
@@ -75,54 +49,38 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
-        // 1. Inicjalizacja mapy
         const map = L.map('map').setView([51.9194, 19.1451], 6);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        // Tablica na nasze adresy
         let deliveryPoints = [];
+        let routeLayer = null; // Zmienna przechowująca narysowaną linię trasy
 
-        // 2. Funkcja szukająca adresu (Geokodowanie)
         async function addAddress() {
             const address = document.getElementById('address-input').value;
-            if (!address) return; // Jeśli pole jest puste, nic nie rób
+            if (!address) return;
 
-            // Budujemy URL do API Nominatim
             const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
 
             try {
-                // Wysyłamy zapytanie do serwera i czekamy na odpowiedź
                 const response = await fetch(url);
                 const data = await response.json();
 
                 if (data && data.length > 0) {
-                    // Pobieramy współrzędne z pierwszego (najlepszego) wyniku
                     const lat = parseFloat(data[0].lat);
                     const lon = parseFloat(data[0].lon);
                     const displayName = data[0].display_name;
 
-                    // Tworzymy znacznik i dodajemy na mapę
-                    const marker = L.marker([lat, lon]).addTo(map);
-                    marker.bindPopup(displayName);
+                    L.marker([lat, lon]).addTo(map).bindPopup(displayName);
+                    map.setView([lat, lon], 13);
 
-                    // Wyśrodkowujemy mapę na nowym punkcie
-                    map.setView([lat, lon], 14);
-
-                    // Zapisujemy punkt do naszej wirtualnej "bazy danych" (tablicy)
-                    deliveryPoints.push({
-                        lat: lat,
-                        lon: lon,
-                        name: displayName
-                    });
-
-                    // Aktualizujemy tekstową listę w panelu i czyścimy pole wpisywania
+                    deliveryPoints.push({ lat: lat, lon: lon, name: displayName });
                     updateListUI();
                     document.getElementById('address-input').value = '';
                 } else {
-                    alert("Nie udało się znaleźć takiego adresu. Spróbuj wpisać go inaczej (np. ulica numer, miasto).");
+                    alert("Nie udało się znaleźć adresu.");
                 }
             } catch (error) {
                 console.error("Błąd API:", error);
@@ -130,19 +88,63 @@
             }
         }
 
-        // 3. Funkcja odświeżająca listę w interfejsie
         function updateListUI() {
             const listElement = document.getElementById('points-list');
-            listElement.innerHTML = ''; // Czyścimy obecną listę
-
-            // Rysujemy listę na nowo na podstawie tablicy deliveryPoints
+            listElement.innerHTML = ''; 
             deliveryPoints.forEach((point, index) => {
                 const li = document.createElement('li');
-                // Rozdzielamy długą nazwę po przecinku, żeby nie zaśmiecać widoku
                 const shortName = point.name.split(',')[0] + ', ' + point.name.split(',')[1];
-                li.innerText = shortName;
+                // Dodajemy numerację, żeby wiedzieć, który punkt był pierwszy (baza)
+                li.innerText = `${index === 0 ? '[BAZA] ' : ''}${shortName}`;
                 listElement.appendChild(li);
             });
+        }
+
+        // 4. NOWA FUNKCJA: Optymalizacja i rysowanie trasy
+        async function optimizeRoute() {
+            if (deliveryPoints.length < 2) {
+                alert("Musisz dodać co najmniej 2 punkty, aby wyznaczyć trasę!");
+                return;
+            }
+
+            // OSRM wymaga współrzędnych w formacie: dlugosc,szerokosc;dlugosc,szerokosc... (lon,lat)
+            const coordinatesString = deliveryPoints.map(p => `${p.lon},${p.lat}`).join(';');
+
+            // Budujemy URL do API OSRM (funkcja 'trip' automatycznie układa punkty w optymalnej kolejności)
+            // source=first oznacza, że pierwszy punkt to start, roundtrip=true oznacza powrót do bazy
+            const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordinatesString}?source=first&roundtrip=true&overview=full&geometries=geojson`;
+
+            try {
+                const response = await fetch(osrmUrl);
+                const data = await response.json();
+
+                if (data.code === 'Ok') {
+                    // Jeśli na mapie jest już narysowana stara trasa, usuwamy ją
+                    if (routeLayer) {
+                        map.removeLayer(routeLayer);
+                    }
+
+                    // Pobieramy kształt trasy z odpowiedzi serwera (GeoJSON)
+                    const routeGeoJSON = data.trips[0].geometry;
+
+                    // Rysujemy nową linię na mapie (na niebiesko z lekką przezroczystością)
+                    routeLayer = L.geoJSON(routeGeoJSON, {
+                        style: {
+                            color: '#007bff',
+                            weight: 5,
+                            opacity: 0.7
+                        }
+                    }).addTo(map);
+
+                    // Dopasowujemy widok mapy tak, aby cała trasa zmieściła się na ekranie
+                    map.fitBounds(routeLayer.getBounds());
+                } else {
+                    alert("Nie udało się wyznaczyć trasy. Sprawdź, czy punkty nie są zbyt daleko od dróg.");
+                }
+            } catch (error) {
+                console.error("Błąd routingu:", error);
+                alert("Wystąpił błąd podczas obliczania trasy.");
+            }
         }
     </script>
 </body>
