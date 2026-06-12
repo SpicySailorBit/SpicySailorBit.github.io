@@ -11,16 +11,14 @@
         body, html { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; overflow: hidden; }
         #map { width: 100%; height: 100vh; z-index: 1; }
         
-        /* Zmieniony styl panelu, by lepiej działał na mobile */
         #ui-panel {
             position: absolute; top: 10px; right: 10px; z-index: 1000;
             background: white; border-radius: 8px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3); 
-            width: 320px; max-width: 90vw; /* Nie szerszy niż 90% ekranu telefonu */
+            width: 320px; max-width: 90vw;
             display: flex; flex-direction: column;
         }
         
-        /* Wygląd nagłówka, który służy do zwijania menu */
         #ui-header {
             background-color: #343a40; color: white; padding: 15px;
             border-radius: 8px; cursor: pointer;
@@ -28,13 +26,8 @@
             font-weight: bold; font-size: 16px;
         }
         
-        /* Zaokrąglenie tylko górnych rogów, gdy panel jest rozwinięty */
-        #ui-panel:not(.collapsed) #ui-header {
-            border-bottom-left-radius: 0; border-bottom-right-radius: 0;
-        }
-
+        #ui-panel:not(.collapsed) #ui-header { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
         #ui-content { padding: 15px; }
-        /* Klasa ukrywająca zawartość */
         .hidden { display: none !important; }
         
         #address-input { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;}
@@ -54,6 +47,22 @@
         
         #points-list { margin-top: 10px; padding-left: 20px; font-size: 14px; max-height: 150px; overflow-y: auto; }
         hr { border: 0; height: 1px; background: #ddd; margin: 15px 0; }
+
+        /* Style dla ponumerowanych znaczników */
+        .custom-marker {
+            background-color: #007bff; /* Niebieski dla punktów */
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 28px;
+            font-size: 14px;
+            font-weight: bold;
+            border: 2px solid white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+        }
+        .custom-marker.baza {
+            background-color: #28a745; /* Zielony dla bazy */
+        }
     </style>
 </head>
 <body>
@@ -85,10 +94,8 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
+        // Zmiana: zoomControl na false usuwa przyciski + i -
         const map = L.map('map', { zoomControl: false }).setView([51.9194, 19.1451], 6);
-        
-        // Przenosimy przyciski przybliżania (zoom) na lewą stronę, żeby nie chowały się pod naszym panelem
-        L.control.zoom({ position: 'topleft' }).addTo(map);
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
@@ -97,14 +104,10 @@
 
         let deliveryPoints = [];
         let routeLayer = null; 
-        
-        // NOWOŚĆ: Grupa na znaczniki adresów (ułatwia ich późniejsze usuwanie)
         let markersLayer = L.layerGroup().addTo(map);
-
         let trackingId = null;
         let courierMarker = null;
 
-        // Funkcja do zwijania/rozwijania panelu
         function togglePanel() {
             const content = document.getElementById('ui-content');
             const icon = document.getElementById('toggle-icon');
@@ -133,7 +136,7 @@
                     const lon = parseFloat(data[0].lon);
                     const displayName = data[0].display_name;
                     
-                    // Dodajemy znacznik do naszej grupy (markersLayer) zamiast bezpośrednio do mapy
+                    // Zwykły znacznik przed optymalizacją
                     L.marker([lat, lon]).addTo(markersLayer).bindPopup(displayName);
                     map.setView([lat, lon], 13);
                     
@@ -175,9 +178,35 @@
                     routeLayer = L.geoJSON(data.trips[0].geometry, {
                         style: { color: '#007bff', weight: 5, opacity: 0.7 }
                     }).addTo(map);
-                    map.fitBounds(routeLayer.getBounds());
                     
-                    // NOWOŚĆ: Automatyczne zwinięcie panelu na telefonach po narysowaniu trasy
+                    // NOWOŚĆ: Czyszczenie starych, niebieskich znaczników
+                    markersLayer.clearLayers();
+
+                    // NOWOŚĆ: Dodawanie ponumerowanych znaczników w optymalnej kolejności
+                    deliveryPoints.forEach((point, index) => {
+                        // OSRM zwraca zoptymalizowany indeks (0, 1, 2...)
+                        const optIndex = data.waypoints[index].waypoint_index;
+                        const isBase = optIndex === 0;
+                        const label = isBase ? 'B' : optIndex;
+
+                        // Tworzenie naszej okrągłej ikony z CSS
+                        const customIcon = L.divIcon({
+                            className: isBase ? 'custom-marker baza' : 'custom-marker',
+                            html: label,
+                            iconSize: [32, 32],
+                            iconAnchor: [16, 16] // Środek ikony dokładnie na współrzędnych
+                        });
+
+                        L.marker([point.lat, point.lon], { icon: customIcon })
+                            .addTo(markersLayer)
+                            .bindPopup(`<b>Kolejność: ${isBase ? 'Baza' : optIndex}</b><br>${point.name}`);
+                    });
+
+                    // Jeśli śledzenie GPS nie jest włączone, dopasuj widok do całej trasy
+                    if (!trackingId) {
+                        map.fitBounds(routeLayer.getBounds());
+                    }
+                    
                     if (window.innerWidth < 768) {
                         togglePanel();
                     }
@@ -189,14 +218,13 @@
             }
         }
 
-        // NOWOŚĆ: Czyszczenie wszystkich danych
         function clearAll() {
             if (confirm("Czy na pewno chcesz usunąć całą trasę i zacząć od nowa?")) {
-                deliveryPoints = []; // Reset tablicy
-                updateListUI(); // Wyczyść listę na ekranie
-                markersLayer.clearLayers(); // Usuń wszystkie pinezki z adresami
+                deliveryPoints = []; 
+                updateListUI(); 
+                markersLayer.clearLayers(); 
                 if (routeLayer) {
-                    map.removeLayer(routeLayer); // Usuń narysowaną linię trasy
+                    map.removeLayer(routeLayer); 
                     routeLayer = null;
                 }
             }
@@ -231,10 +259,13 @@
                             courierMarker = L.circleMarker([lat, lon], {
                                 color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8
                             }).addTo(map);
-                            map.setView([lat, lon], 16);
                         } else {
                             courierMarker.setLatLng([lat, lon]);
                         }
+                        
+                        // NOWOŚĆ: Automatyczne podążanie kamery za czerwoną kropką
+                        map.panTo([lat, lon]);
+                        // Opcjonalnie możemy też wymusić zbliżenie: map.setView([lat, lon], 16);
                     },
                     (error) => {
                         console.error("Błąd GPS:", error);
