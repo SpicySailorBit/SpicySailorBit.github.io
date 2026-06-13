@@ -81,10 +81,9 @@
             font-weight: bold; font-size: 14px; text-align: center;
         }
 
-        /* NOWOŚĆ: Style dla profesjonalnego okna modalnego edycji */
         #modal-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.5); z-index: 2000; /* Wyżej niż wszystko inne */
+            background: rgba(0, 0, 0, 0.5); z-index: 2000; 
             display: flex; justify-content: center; align-items: center;
         }
         #edit-modal {
@@ -144,7 +143,6 @@
     <div id="modal-overlay" class="hidden">
         <div id="edit-modal">
             <h3 id="modal-title">Edycja elementu</h3>
-            
             <label for="modal-input-name">Nazwa (maks. 50 znaków):</label>
             <input type="text" id="modal-input-name" placeholder="Wpisz nazwę...">
             
@@ -182,8 +180,7 @@
         let isFollowingGPS = false;
         let lastKnownPosition = null;
 
-        // Zmienne pomocnicze do pamiętania co aktualnie edytujemy w oknie modalnym
-        let currentEditingType = null; // 'group' lub 'address'
+        let currentEditingType = null; 
         let currentEditingGroupId = null;
         let currentEditingAddressId = null;
 
@@ -220,16 +217,28 @@
             try {
                 const response = await fetch(url); const data = await response.json();
                 if (data && data.length > 0) {
-                    addPointToMapAndList(parseFloat(data[0].lat), parseFloat(data[0].lon), data[0].display_name, "");
-                    document.getElementById('address-input').value = '';
+                    // NOWOŚĆ: Skrypt teraz pobiera wynik działania funkcji (czy dodano)
+                    const success = addPointToMapAndList(parseFloat(data[0].lat), parseFloat(data[0].lon), data[0].display_name, "");
+                    // Jeśli sukces, to czyści pole wpisywania
+                    if (success) document.getElementById('address-input').value = '';
                 } else { alert("Nie udało się znaleźć adresu."); }
             } catch (error) { alert("Wystąpił problem z połączeniem."); }
         }
 
-        function addPointToMapAndList(lat, lon, name, description = "") {
+        // NOWOŚĆ: Funkcja z logiką sprawdzania duplikatów i flagą 'silent' (cichy tryb dla dodawania masowego)
+        function addPointToMapAndList(lat, lon, name, description = "", silent = false) {
+            // Blokada: Szukamy punktu z identycznymi współrzędnymi
+            const isDuplicate = deliveryPoints.some(p => p.lat === lat && p.lon === lon);
+            
+            if (isDuplicate) {
+                if (!silent) alert(`Adres jest już dodany do bieżącej trasy!\n(${name.split(',')[0]})`);
+                return false; // Przerwij dodawanie
+            }
+
             const id = Date.now() + Math.floor(Math.random() * 1000);
             deliveryPoints.push({ id: id, lat: lat, lon: lon, name: name, description: description, status: 'pending' });
             updateListUI(); drawAllMarkers(); map.setView([lat, lon], 13);
+            return true; // Sukces
         }
 
         function updateListUI() {
@@ -299,72 +308,48 @@
             savedGroups.push({ id: 'group_' + Date.now(), name: name, addresses: [] }); saveGroupsToStorage();
         }
 
-        // NOWOŚĆ: Funkcja otwierająca modal dla GRUPY
         function openGroupEditModal(groupId, event) {
-            event.stopPropagation(); // Stop rozwijaniu listy pod spodem
-            const group = savedGroups.find(g => g.id === groupId);
-            if (!group) return;
-
-            currentEditingType = 'group';
-            currentEditingGroupId = groupId;
-
+            event.stopPropagation(); const group = savedGroups.find(g => g.id === groupId); if (!group) return;
+            currentEditingType = 'group'; currentEditingGroupId = groupId;
             document.getElementById('modal-title').innerText = "Edycja grupy";
             document.getElementById('modal-input-name').value = group.name;
-            document.getElementById('modal-desc-container').classList.add('hidden'); // Ukrywamy opis dla grupy
-
+            document.getElementById('modal-desc-container').classList.add('hidden'); 
             document.getElementById('modal-overlay').classList.remove('hidden');
         }
 
-        // NOWOŚĆ: Funkcja otwierająca modal dla ADRESU
         function openAddressEditModal(groupId, addrId) {
-            const group = savedGroups.find(g => g.id === groupId);
-            if (!group) return;
-            const addr = group.addresses.find(a => a.id === addrId);
-            if (!addr) return;
-
-            currentEditingType = 'address';
-            currentEditingGroupId = groupId;
-            currentEditingAddressId = addrId;
-
+            const group = savedGroups.find(g => g.id === groupId); if (!group) return;
+            const addr = group.addresses.find(a => a.id === addrId); if (!addr) return;
+            currentEditingType = 'address'; currentEditingGroupId = groupId; currentEditingAddressId = addrId;
             document.getElementById('modal-title').innerText = "Edycja adresu";
             document.getElementById('modal-input-name').value = addr.name;
             document.getElementById('modal-input-desc').value = addr.description || "";
-            document.getElementById('modal-desc-container').classList.remove('hidden'); // Pokazujemy opis dla adresu
-
+            document.getElementById('modal-desc-container').classList.remove('hidden'); 
             document.getElementById('modal-overlay').classList.remove('hidden');
         }
 
-        // NOWOŚĆ: Funkcja zamykająca okno modalne
         function closeModal() {
             document.getElementById('modal-overlay').classList.add('hidden');
-            currentEditingType = null;
-            currentEditingGroupId = null;
-            currentEditingAddressId = null;
+            currentEditingType = null; currentEditingGroupId = null; currentEditingAddressId = null;
         }
 
-        // NOWOŚĆ: Funkcja zatwierdzająca zmiany z okna modalnego
         function saveModalChanges() {
             const nameInput = document.getElementById('modal-input-name').value.substring(0, 50).trim();
             if (!nameInput) { alert("Nazwa nie może być pusta!"); return; }
-
             if (currentEditingType === 'group') {
                 const group = savedGroups.find(g => g.id === currentEditingGroupId);
                 if (group) group.name = nameInput;
-            } 
-            else if (currentEditingType === 'address') {
+            } else if (currentEditingType === 'address') {
                 const group = savedGroups.find(g => g.id === currentEditingGroupId);
                 if (group) {
                     const addr = group.addresses.find(a => a.id === currentEditingAddressId);
                     if (addr) {
                         const descInput = document.getElementById('modal-input-desc').value.substring(0, 50).trim();
-                        addr.name = nameInput;
-                        addr.description = descInput;
+                        addr.name = nameInput; addr.description = descInput;
                     }
                 }
             }
-
-            saveGroupsToStorage();
-            closeModal();
+            saveGroupsToStorage(); closeModal();
         }
 
         function deleteGroup(groupId, event) {
@@ -389,16 +374,30 @@
             } catch (error) { alert("Błąd połączenia."); }
         }
 
+        // NOWOŚĆ: Logika zliczania pominiętych duplikatów przy dodawaniu masowym
         function addSelectedSaved() {
-            const checkboxes = document.querySelectorAll('.saved-checkbox:checked'); if(checkboxes.length === 0) { alert("Zaznacz najpierw adresy z grup."); return; }
+            const checkboxes = document.querySelectorAll('.saved-checkbox:checked'); 
+            if(checkboxes.length === 0) { alert("Zaznacz najpierw adresy z grup."); return; }
+            
+            let duplicatesCount = 0;
+
             checkboxes.forEach(cb => {
                 const group = savedGroups.find(g => g.id === cb.getAttribute('data-group-id'));
                 if (group) {
                     const addr = group.addresses.find(a => a.id === cb.getAttribute('data-addr-id'));
-                    if (addr) addPointToMapAndList(addr.lat, addr.lon, addr.name, addr.description || "");
+                    if (addr) {
+                        // Flaga 'true' oznacza, że dodajemy cicho (bez alertów dla każdego adresu)
+                        const added = addPointToMapAndList(addr.lat, addr.lon, addr.name, addr.description || "", true);
+                        if (!added) duplicatesCount++; // Jeśli się nie udało dodać, zwiększamy licznik duplikatów
+                    }
                 }
-                cb.checked = false;
+                cb.checked = false; // Odznaczamy checkbox po akcji
             });
+
+            // Wyświetlamy alert ze zbiorczym podsumowaniem odrzuceń
+            if (duplicatesCount > 0) {
+                alert(`Pominięto ${duplicatesCount} adres(ów), ponieważ znajdują się już na bieżącej trasie.`);
+            }
         }
 
         function deleteSavedAddress(groupId, addrId) {
@@ -505,18 +504,4 @@
                         const alertDiv = document.getElementById('proximity-alert');
                         if (closestPoint) {
                             if (currentClosestId !== closestPoint.id) {
-                                alertDiv.innerHTML = `<div style="font-size:14px; margin-bottom:8px;"><b>Jesteś blisko celu:</b><br><span id="prox-dist">${Math.round(minDistance)}</span>m - ${closestPoint.name}</div><button class="btn-danger" style="margin-bottom:5px; padding:8px;" onclick="updatePointStatus(${closestPoint.id}, 'completed')">✔️ Punkt Zaliczony</button><button class="btn-warning" style="margin-bottom:0; padding:8px;" onclick="updatePointStatus(${closestPoint.id}, 'postponed')">🕒 Przyjadę później</button>`;
-                                alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id;
-                            } else { const distSpan = document.getElementById('prox-dist'); if (distSpan) distSpan.innerText = Math.round(minDistance); }
-                        } else { alertDiv.classList.add('hidden'); currentClosestId = null; }
-                    },
-                    (error) => { alert("Brak GPS."); navigator.geolocation.clearWatch(trackingId); trackingId = null; isFollowingGPS = false; centerBtn.classList.add('hidden'); btn.innerText = "📍 Rozpocznij śledzenie GPS"; btn.className = "btn-warning"; },
-                    { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
-                );
-            }
-        }
-
-        renderSavedAddresses();
-    </script>
-</body>
-</html>
+                                alertDiv.innerHTML = `<div style="font-size:14px; margin-bottom:8px;"><b>Jesteś bl
