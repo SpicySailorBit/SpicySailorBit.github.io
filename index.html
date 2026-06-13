@@ -148,6 +148,9 @@
             <div id="modal-desc-container">
                 <label for="modal-input-desc">Opis / Notatka (maks. 50 znaków):</label>
                 <input type="text" id="modal-input-desc" placeholder="np. Kod do bramy 123...">
+                
+                <label for="modal-input-group" style="margin-top: 10px;">Przypisz do grupy:</label>
+                <select id="modal-input-group"></select>
             </div>
             
             <div class="modal-buttons">
@@ -165,7 +168,6 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
-        // 1. INICJALIZACJA MAPY
         const map = L.map('map', { zoomControl: false }).setView([51.9194, 19.1451], 6);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
@@ -183,33 +185,26 @@
         let currentEditingGroupId = null;
         let currentEditingAddressId = null;
 
-        // 2. BEZPIECZNE ŁADOWANIE PAMIĘCI
         let savedGroups = [];
-        try {
-            const rawGroups = localStorage.getItem('courierSavedGroups');
-            if (rawGroups) {
-                savedGroups = JSON.parse(rawGroups);
-            } else {
-                const oldFlatData = localStorage.getItem('courierSavedAddresses');
-                if (oldFlatData) {
-                    const oldAddresses = JSON.parse(oldFlatData);
-                    savedGroups = [{
-                        id: 'group_default', name: 'Ogólne',
-                        addresses: oldAddresses.map((a, idx) => ({
-                            id: 'addr_' + Date.now() + '_' + idx,
-                            lat: a.lat, lon: a.lon, 
-                            name: a.name ? a.name.split(',')[0] : 'Nieznany adres', 
-                            description: ''
-                        }))
-                    }];
-                } else {
-                    savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }];
-                }
-                localStorage.setItem('courierSavedGroups', JSON.stringify(savedGroups));
-            }
-        } catch (e) {
-            console.error("Błąd pamięci lokalnej, resetuję dane stałych adresów", e);
-            savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }];
+        const rawGroups = localStorage.getItem('courierSavedGroups');
+        
+        if (rawGroups) {
+            savedGroups = JSON.parse(rawGroups);
+        } else {
+            const oldFlatData = localStorage.getItem('courierSavedAddresses');
+            if (oldFlatData) {
+                const oldAddresses = JSON.parse(oldFlatData);
+                savedGroups = [{
+                    id: 'group_default', name: 'Ogólne',
+                    addresses: oldAddresses.map((a, idx) => ({
+                        id: 'addr_' + Date.now() + '_' + idx,
+                        lat: a.lat, lon: a.lon, 
+                        name: a.name ? a.name.split(',')[0] : 'Nieznany adres', 
+                        description: ''
+                    }))
+                }];
+            } else { savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }]; }
+            localStorage.setItem('courierSavedGroups', JSON.stringify(savedGroups));
         }
 
         function togglePanel() {
@@ -218,38 +213,54 @@
             else { content.classList.add('hidden'); panel.classList.add('collapsed'); icon.innerText = '▲'; }
         }
 
+        // NOWOŚĆ: Pomocnicza funkcja czyszcząca i formatująca adres do postaci "Ulica numer, Miasto"
+        function formatAddressString(apiData) {
+            if (apiData.address) {
+                const addr = apiData.address;
+                // Wybieramy ulicę lub odpowiednik
+                const street = addr.road || addr.pedestrian || addr.suburb || addr.neighbourhood || "";
+                const number = addr.house_number || "";
+                // Wybieramy miasto, miasteczko lub wieś
+                const city = addr.city || addr.town || addr.village || addr.municipality || "";
+                
+                if (street && city) {
+                    return `${street}${number ? ' ' + number : ''}, ${city}`;
+                }
+            }
+            // Zapasowy mechanizm, jeśli szczegółowe pola nie istnieją: bierzemy dwa pierwsze człony pełnej nazwy
+            const parts = apiData.display_name.split(',');
+            if (parts.length >= 2) {
+                return parts[0].trim() + ', ' + parts[1].trim();
+            }
+            return apiData.display_name;
+        }
+
         async function addAddress() {
             const address = document.getElementById('address-input').value;
             if (!address) return;
-            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
+            // Dodajemy parametr &addressdetails=1, aby Nominatim zwrócił nam rozbite pola adresu (ulica, miasto, numer)
+            const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(address)}`;
             try {
                 const response = await fetch(url); const data = await response.json();
                 if (data && data.length > 0) {
-                    // Wywołanie z blokadą duplikatów
-                    const isAdded = addPointToMapAndList(parseFloat(data[0].lat), parseFloat(data[0].lon), data[0].display_name, "");
+                    // Formatujemy adres za pomocą nowej funkcji
+                    const formattedName = formatAddressString(data[0]);
+                    const isAdded = addPointToMapAndList(parseFloat(data[0].lat), parseFloat(data[0].lon), formattedName, "");
                     if (isAdded) document.getElementById('address-input').value = '';
                 } else { alert("Nie udało się znaleźć adresu."); }
             } catch (error) { alert("Wystąpił problem z połączeniem."); }
         }
 
-        // 3. NOWOŚĆ: BEZPIECZNA FUNKCJA DODAWANIA (Z BLOKADĄ DUPLIKATÓW)
         function addPointToMapAndList(lat, lon, name, description = "", silent = false) {
-            // Szukamy, czy istnieje punkt (o statusie 'pending'), który leży dokładnie w tym samym miejscu
             const isDuplicate = deliveryPoints.some(p => Math.abs(p.lat - lat) < 0.0001 && Math.abs(p.lon - lon) < 0.0001 && p.status === 'pending');
-            
             if (isDuplicate) {
-                if (!silent) {
-                    alert(`Ten adres jest już na aktywnej trasie!\n(${name.split(',')[0]})`);
-                }
-                return false; // Nie powiodło się (duplikat)
+                if (!silent) alert(`Ten adres jest już na aktywnej trasie!\n(${name.split(',')[0]})`);
+                return false;
             }
-
             const id = Date.now() + Math.floor(Math.random() * 1000);
             deliveryPoints.push({ id: id, lat: lat, lon: lon, name: name, description: description, status: 'pending' });
-            updateListUI(); 
-            drawAllMarkers(); 
-            map.setView([lat, lon], 13);
-            return true; // Sukces
+            updateListUI(); drawAllMarkers(); map.setView([lat, lon], 13);
+            return true;
         }
 
         function updateListUI() {
@@ -267,7 +278,7 @@
             const statsDiv = document.getElementById('route-stats');
             const km = (distance / 1000).toFixed(1); const hrs = Math.floor(duration / 3600); const mins = Math.floor((duration % 3600) / 60);
             let timeStr = ''; if (hrs > 0) timeStr += `${hrs}g `; timeStr += `${mins}m`;
-            statsDiv.innerHTML = `🛣️ Zostało: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
+            statsDiv.innerHTML = `AM / Dystans: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
             statsDiv.classList.remove('hidden');
         }
 
@@ -296,7 +307,7 @@
                                 <b>${addr.name}</b> ${addr.description ? `<br><small style="color:#666; font-style:italic;">${addr.description}</small>` : ''}
                             </span>
                             <div class="item-actions">
-                                <span class="action-edit" onclick="openAddressEditModal('${group.id}', '${addr.id}')" title="Edytuj nazwę/opis">⚙️</span>
+                                <span class="action-edit" onclick="openAddressEditModal('${group.id}', '${addr.id}')" title="Edytuj nazwę/opis/grupę">⚙️</span>
                                 <span class="action-delete" onclick="deleteSavedAddress('${group.id}', '${addr.id}')" title="Usuń adres">✖</span>
                             </div>
                         `;
@@ -328,13 +339,30 @@
             document.getElementById('modal-overlay').classList.remove('hidden');
         }
 
+        // Zmiana: Funkcja uzupełnia teraz listę grup wewnątrz okna modalnego i zaznacza aktualną grupę adresu
         function openAddressEditModal(groupId, addrId) {
             const group = savedGroups.find(g => g.id === groupId); if (!group) return;
             const addr = group.addresses.find(a => a.id === addrId); if (!addr) return;
-            currentEditingType = 'address'; currentEditingGroupId = groupId; currentEditingAddressId = addrId;
+
+            currentEditingType = 'address';
+            currentEditingGroupId = groupId;
+            currentEditingAddressId = addrId;
+
             document.getElementById('modal-title').innerText = "Edycja adresu";
             document.getElementById('modal-input-name').value = addr.name;
             document.getElementById('modal-input-desc').value = addr.description || "";
+            
+            // NOWOŚĆ: Budowanie listy grup wewnątrz modala
+            const modalSelect = document.getElementById('modal-input-group');
+            modalSelect.innerHTML = '';
+            savedGroups.forEach(g => {
+                const opt = document.createElement('option');
+                opt.value = g.id;
+                opt.innerText = g.name;
+                if (g.id === groupId) opt.selected = true; // Domyślnie zaznaczona jest aktualna grupa adresu
+                modalSelect.appendChild(opt);
+            });
+
             document.getElementById('modal-desc-container').classList.remove('hidden'); 
             document.getElementById('modal-overlay').classList.remove('hidden');
         }
@@ -344,19 +372,36 @@
             currentEditingType = null; currentEditingGroupId = null; currentEditingAddressId = null;
         }
 
+        // Zmiana: Funkcja obsługuje teraz bezpieczną relokację adresu do innej grupy, jeśli została zmieniona na liście
         function saveModalChanges() {
             const nameInput = document.getElementById('modal-input-name').value.substring(0, 50).trim();
             if (!nameInput) { alert("Nazwa nie może być pusta!"); return; }
+
             if (currentEditingType === 'group') {
                 const group = savedGroups.find(g => g.id === currentEditingGroupId);
                 if (group) group.name = nameInput;
-            } else if (currentEditingType === 'address') {
-                const group = savedGroups.find(g => g.id === currentEditingGroupId);
-                if (group) {
-                    const addr = group.addresses.find(a => a.id === currentEditingAddressId);
-                    if (addr) {
+            } 
+            else if (currentEditingType === 'address') {
+                const oldGroup = savedGroups.find(g => g.id === currentEditingGroupId);
+                if (oldGroup) {
+                    const addrIndex = oldGroup.addresses.findIndex(a => a.id === currentEditingAddressId);
+                    if (addrIndex !== -1) {
+                        const addr = oldGroup.addresses[addrIndex];
                         const descInput = document.getElementById('modal-input-desc').value.substring(0, 50).trim();
-                        addr.name = nameInput; addr.description = descInput;
+                        const targetGroupId = document.getElementById('modal-input-group').value;
+
+                        addr.name = nameInput;
+                        addr.description = descInput;
+
+                        // NOWOŚĆ: Logika przepisywania adresu do innej grupy
+                        if (targetGroupId !== currentEditingGroupId) {
+                            const newGroup = savedGroups.find(g => g.id === targetGroupId);
+                            if (newGroup) {
+                                // Usuń ze starej grupy i dodaj do nowej
+                                oldGroup.addresses.splice(addrIndex, 1);
+                                newGroup.addresses.push(addr);
+                            }
+                        }
                     }
                 }
             }
@@ -373,42 +418,38 @@
         async function savePermanentAddress() {
             const address = document.getElementById('saved-address-input').value; const groupId = document.getElementById('saved-group-select').value; if (!address || !groupId) return;
             const group = savedGroups.find(g => g.id === groupId); if (!group) return;
+            // Dodajemy &addressdetails=1 dla stałych adresów
+            const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(address)}`;
             try {
-                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`); const data = await response.json();
+                const response = await fetch(url); const data = await response.json();
                 if (data && data.length > 0) {
+                    // Formatowanie do czytelnej struktury
+                    const formattedName = formatAddressString(data[0]);
+
                     group.addresses.push({
                         id: 'addr_' + Date.now() + Math.floor(Math.random() * 100), lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon),
-                        name: data[0].display_name.split(',')[0] + ', ' + data[0].display_name.split(',')[1], description: ""
+                        name: formattedName, description: ""
                     });
                     saveGroupsToStorage(); document.getElementById('saved-address-input').value = '';
                 } else { alert("Nie znaleziono adresu."); }
             } catch (error) { alert("Błąd połączenia."); }
         }
 
-        // 4. NOWOŚĆ: GRUPOWE DODAWANIE Z BLOKADĄ
         function addSelectedSaved() {
-            const checkboxes = document.querySelectorAll('.saved-checkbox:checked'); 
-            if(checkboxes.length === 0) { alert("Zaznacz najpierw adresy z grup."); return; }
-            
+            const checkboxes = document.querySelectorAll('.saved-checkbox:checked'); if(checkboxes.length === 0) { alert("Zaznacz najpierw adresy z grup."); return; }
             let duplicatesCount = 0;
-
             checkboxes.forEach(cb => {
                 const group = savedGroups.find(g => g.id === cb.getAttribute('data-group-id'));
                 if (group) {
                     const addr = group.addresses.find(a => a.id === cb.getAttribute('data-addr-id'));
                     if (addr) {
-                        // Flaga 'true' zapobiega wyskakiwaniu alertu dla pojedynczego adresu
                         const success = addPointToMapAndList(addr.lat, addr.lon, addr.name, addr.description || "", true);
-                        if (!success) duplicatesCount++; // Liczymy zablokowane adresy
+                        if (!success) duplicatesCount++;
                     }
                 }
                 cb.checked = false;
             });
-
-            // Zbiorczy alert
-            if (duplicatesCount > 0) {
-                alert(`Pominięto ${duplicatesCount} adres(ów), ponieważ znajdują się już na bieżącej trasie.`);
-            }
+            if (duplicatesCount > 0) alert(`Pominięto ${duplicatesCount} adres(ów), ponieważ znajdują się już na bieżącej trasie.`);
         }
 
         function deleteSavedAddress(groupId, addrId) {
