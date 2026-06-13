@@ -15,7 +15,7 @@
             position: absolute; top: 10px; right: 10px; z-index: 1000;
             background: white; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); 
             width: 320px; max-width: 90vw; display: flex; flex-direction: column;
-            max-height: 90vh; /* ZWIĘKSZONE: Panel może zająć więcej ekranu */
+            max-height: 90vh; 
         }
         
         #ui-header {
@@ -25,13 +25,12 @@
         
         #ui-panel:not(.collapsed) #ui-header { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
         
-        /* ZMIANA: Włączone zaawansowane przewijanie i margines dolny dla całej zawartości menu */
         #ui-content { 
             padding: 15px; 
             overflow-y: auto; 
             max-height: calc(90vh - 50px); 
         }
-        .scroll-buffer { height: 40px; } /* NOWOŚĆ: Dodatkowy margines na dole, ułatwiający przewijanie na mobile */
+        .scroll-buffer { height: 40px; } 
 
         .hidden { display: none !important; }
         
@@ -45,7 +44,6 @@
         .btn-info { background-color: #17a2b8; } .btn-info:hover { background-color: #138496; }
         .btn-secondary { background-color: #6c757d; } .btn-secondary:hover { background-color: #5a6268; }
         
-        /* ZMIANA: Zwiększona maksymalna wysokość listy punktów, by zmieściło się ich więcej przed scrollowaniem */
         #points-list { margin-top: 10px; padding-left: 20px; font-size: 14px; max-height: 180px; overflow-y: auto; }
         hr { border: 0; height: 1px; background: #ddd; margin: 15px 0; }
 
@@ -64,7 +62,6 @@
         .action-edit { color: #007bff; cursor: pointer; font-weight: bold; }
         .action-delete { color: #dc3545; cursor: pointer; font-weight: bold; }
         
-        /* ZMIANA: Elastyczna wysokość kontenera grup */
         #saved-groups-container { max-height: 220px; overflow-y: auto; margin-top: 10px; margin-bottom: 10px; }
         .saved-item-list { list-style: none; padding-left: 5px; margin: 5px 0 0 0; border-top: 1px dashed #ccc; padding-top: 5px; }
         .saved-item { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-bottom: 6px; background: white; padding: 6px; border-radius: 4px; border: 1px solid #eee;}
@@ -138,15 +135,11 @@
                 <summary style="font-weight: bold; cursor: pointer; margin-bottom: 5px;">📂 Stałe adresy (Zapisane)</summary>
                 <div style="margin-top: 10px;">
                     <button class="btn-info" style="background-color: #20c997; padding: 6px; font-size: 13px;" onclick="createNewGroup()">📁 + Nowa grupa</button>
-                    
                     <label style="font-size: 12px; font-weight: bold; color: #555;">Wybierz grupę zapisu:</label>
                     <select id="saved-group-select"></select>
-
                     <input type="text" id="saved-address-input" placeholder="Dodaj nowy stały adres">
                     <button class="btn-info" onclick="savePermanentAddress()">💾 Zapisz w stałych</button>
-                    
                     <div id="saved-groups-container"></div>
-                    
                     <button class="btn-success" style="margin-bottom: 0;" onclick="addSelectedSaved()">✔️ Dodaj zaznaczone</button>
                 </div>
             </details>
@@ -162,7 +155,6 @@
             <ul id="points-list"></ul>
             
             <button class="btn-danger" style="margin-top: 10px; background-color: #6c757d;" onclick="clearAll()">🗑️ Wyczyść mapę</button>
-            
             <div class="scroll-buffer"></div>
         </div>
     </div>
@@ -470,36 +462,54 @@
             }
         }
 
-        // ZMIANA: Zmieniono warunki sprawdzające na < 1 (naprawa blokady jednego punktu)
+        // ZMIANA: Zmuszenie algorytmu komiwojażera do startowania z pozycji GPS
         async function optimizeRoute() {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending'); 
             if (routePoints.length < 1) { alert("Musisz dodać co najmniej 1 punkt!"); return; }
+
+            if (!lastKnownPosition) {
+                alert("Oczekiwanie na sygnał GPS... Czerwona kropka musi być widoczna, aby wyznaczyć trasę od Twojej pozycji.");
+                return;
+            }
             
-            // NOWOŚĆ: Prawidłowe przepuszczenie jednego adresu i wyznaczenie linii od GPS
+            // JEDEN ADRES: Po prostu wyznacz linię od GPS do celu
             if (routePoints.length === 1) {
                 routePoints[0].optLabel = 1;
                 updateListUI(); drawAllMarkers();
-                
-                if (lastKnownPosition) {
-                    recalculateRouteLine();
-                } else {
-                    map.setView([routePoints[0].lat, routePoints[0].lon], 13);
-                }
+                recalculateRouteLine();
                 if (window.innerWidth < 768) togglePanel();
                 return;
             }
 
+            // DWA LUB WIĘCEJ: Optymalizacja z twardym punktem początkowym GPS
+            let coordsArray = [];
+            // GPS ZAWSZE NA PIERWSZYM MIEJSCU (index 0)
+            coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); 
+            // Dodanie pozostałych punktów trasy
+            routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));
+
+            // ZMIANA PARAMETRÓW: source=first wymusza start z punktu GPS. roundtrip=false kończy trasę na ostatniej paczce.
+            const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordsArray.join(';')}?source=first&roundtrip=false&overview=full&geometries=geojson`;
+
             try {
-                const response = await fetch(`https://router.project-osrm.org/trip/v1/driving/${routePoints.map(p => `${p.lon},${p.lat}`).join(';')}?overview=full&geometries=geojson`);
+                const response = await fetch(osrmUrl);
                 const data = await response.json();
                 if (data.code === 'Ok') {
                     if (routeLayer) map.removeLayer(routeLayer);
                     routeLayer = L.geoJSON(data.trips[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
-                    routePoints.forEach((point, index) => { const optIndex = data.waypoints[index].waypoint_index; point.optLabel = optIndex + 1; });
+                    
+                    // Serwer zwraca nową kolejność. Pamiętajmy, że na indeksie 0 jest nasz GPS.
+                    routePoints.forEach((point, index) => { 
+                        // Indeks 0 to GPS, więc deliveryPoints zaczynają się od indeksu 1 w odpowiedzi serwera
+                        const optIndex = data.waypoints[index + 1].waypoint_index; 
+                        point.optLabel = optIndex; 
+                    });
+                    
                     updateListUI(); drawAllMarkers(); updateRouteStats(data.trips[0].distance, data.trips[0].duration);
-                    if (!isFollowingGPS) map.fitBounds(routeLayer.getBounds()); if (window.innerWidth < 768) togglePanel();
+                    if (!isFollowingGPS) map.fitBounds(routeLayer.getBounds()); 
+                    if (window.innerWidth < 768) togglePanel();
                 } else { alert("Nie udało się wyznaczyć trasy."); }
-            } catch (error) {}
+            } catch (error) { console.error(error); }
         }
 
         async function recalculateRouteLine() {
