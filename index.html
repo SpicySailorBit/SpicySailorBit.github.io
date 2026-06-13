@@ -130,7 +130,7 @@
             <div id="route-stats" class="hidden"></div>
             
             <hr>
-            <button id="track-btn" class="btn-warning" onclick="toggleTracking()">📍 Rozpocznij śledzenie GPS</button>
+            <button id="track-btn" class="btn-success" style="background-color: #28a745;" onclick="toggleDriveMode()">🚀 Wyruszam!</button>
             
             <h4 style="margin-bottom: 5px; margin-top: 10px;">Lista punktów:</h4>
             <ul id="points-list"></ul>
@@ -178,8 +178,11 @@
         let trackingId = null;
         let courierMarker = null;
         let currentClosestId = null; 
-        let isFollowingGPS = false;
+        
+        // NOWOŚĆ: isFollowingGPS decyduje tylko czy kamera jedzie za kropką. GPS pobierany jest zawsze.
+        let isFollowingGPS = false; 
         let lastKnownPosition = null;
+        let isFirstGPSFix = true; // Pomaga wyśrodkować kamerę tylko RAZ przy wejściu na stronę
 
         let currentEditingType = null; 
         let currentEditingGroupId = null;
@@ -213,37 +216,26 @@
             else { content.classList.add('hidden'); panel.classList.add('collapsed'); icon.innerText = '▲'; }
         }
 
-        // NOWOŚĆ: Pomocnicza funkcja czyszcząca i formatująca adres do postaci "Ulica numer, Miasto"
         function formatAddressString(apiData) {
             if (apiData.address) {
                 const addr = apiData.address;
-                // Wybieramy ulicę lub odpowiednik
                 const street = addr.road || addr.pedestrian || addr.suburb || addr.neighbourhood || "";
                 const number = addr.house_number || "";
-                // Wybieramy miasto, miasteczko lub wieś
                 const city = addr.city || addr.town || addr.village || addr.municipality || "";
-                
-                if (street && city) {
-                    return `${street}${number ? ' ' + number : ''}, ${city}`;
-                }
+                if (street && city) return `${street}${number ? ' ' + number : ''}, ${city}`;
             }
-            // Zapasowy mechanizm, jeśli szczegółowe pola nie istnieją: bierzemy dwa pierwsze człony pełnej nazwy
             const parts = apiData.display_name.split(',');
-            if (parts.length >= 2) {
-                return parts[0].trim() + ', ' + parts[1].trim();
-            }
+            if (parts.length >= 2) return parts[0].trim() + ', ' + parts[1].trim();
             return apiData.display_name;
         }
 
         async function addAddress() {
             const address = document.getElementById('address-input').value;
             if (!address) return;
-            // Dodajemy parametr &addressdetails=1, aby Nominatim zwrócił nam rozbite pola adresu (ulica, miasto, numer)
             const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(address)}`;
             try {
                 const response = await fetch(url); const data = await response.json();
                 if (data && data.length > 0) {
-                    // Formatujemy adres za pomocą nowej funkcji
                     const formattedName = formatAddressString(data[0]);
                     const isAdded = addPointToMapAndList(parseFloat(data[0].lat), parseFloat(data[0].lon), formattedName, "");
                     if (isAdded) document.getElementById('address-input').value = '';
@@ -278,7 +270,7 @@
             const statsDiv = document.getElementById('route-stats');
             const km = (distance / 1000).toFixed(1); const hrs = Math.floor(duration / 3600); const mins = Math.floor((duration % 3600) / 60);
             let timeStr = ''; if (hrs > 0) timeStr += `${hrs}g `; timeStr += `${mins}m`;
-            statsDiv.innerHTML = `AM / Dystans: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
+            statsDiv.innerHTML = `🛣️ Zostało: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
             statsDiv.classList.remove('hidden');
         }
 
@@ -339,69 +331,34 @@
             document.getElementById('modal-overlay').classList.remove('hidden');
         }
 
-        // Zmiana: Funkcja uzupełnia teraz listę grup wewnątrz okna modalnego i zaznacza aktualną grupę adresu
         function openAddressEditModal(groupId, addrId) {
             const group = savedGroups.find(g => g.id === groupId); if (!group) return;
             const addr = group.addresses.find(a => a.id === addrId); if (!addr) return;
-
-            currentEditingType = 'address';
-            currentEditingGroupId = groupId;
-            currentEditingAddressId = addrId;
-
+            currentEditingType = 'address'; currentEditingGroupId = groupId; currentEditingAddressId = addrId;
             document.getElementById('modal-title').innerText = "Edycja adresu";
             document.getElementById('modal-input-name').value = addr.name;
             document.getElementById('modal-input-desc').value = addr.description || "";
-            
-            // NOWOŚĆ: Budowanie listy grup wewnątrz modala
-            const modalSelect = document.getElementById('modal-input-group');
-            modalSelect.innerHTML = '';
-            savedGroups.forEach(g => {
-                const opt = document.createElement('option');
-                opt.value = g.id;
-                opt.innerText = g.name;
-                if (g.id === groupId) opt.selected = true; // Domyślnie zaznaczona jest aktualna grupa adresu
-                modalSelect.appendChild(opt);
-            });
-
+            const modalSelect = document.getElementById('modal-input-group'); modalSelect.innerHTML = '';
+            savedGroups.forEach(g => { const opt = document.createElement('option'); opt.value = g.id; opt.innerText = g.name; if (g.id === groupId) opt.selected = true; modalSelect.appendChild(opt); });
             document.getElementById('modal-desc-container').classList.remove('hidden'); 
             document.getElementById('modal-overlay').classList.remove('hidden');
         }
 
-        function closeModal() {
-            document.getElementById('modal-overlay').classList.add('hidden');
-            currentEditingType = null; currentEditingGroupId = null; currentEditingAddressId = null;
-        }
+        function closeModal() { document.getElementById('modal-overlay').classList.add('hidden'); currentEditingType = null; currentEditingGroupId = null; currentEditingAddressId = null; }
 
-        // Zmiana: Funkcja obsługuje teraz bezpieczną relokację adresu do innej grupy, jeśli została zmieniona na liście
         function saveModalChanges() {
             const nameInput = document.getElementById('modal-input-name').value.substring(0, 50).trim();
             if (!nameInput) { alert("Nazwa nie może być pusta!"); return; }
-
             if (currentEditingType === 'group') {
-                const group = savedGroups.find(g => g.id === currentEditingGroupId);
-                if (group) group.name = nameInput;
-            } 
-            else if (currentEditingType === 'address') {
+                const group = savedGroups.find(g => g.id === currentEditingGroupId); if (group) group.name = nameInput;
+            } else if (currentEditingType === 'address') {
                 const oldGroup = savedGroups.find(g => g.id === currentEditingGroupId);
                 if (oldGroup) {
                     const addrIndex = oldGroup.addresses.findIndex(a => a.id === currentEditingAddressId);
                     if (addrIndex !== -1) {
-                        const addr = oldGroup.addresses[addrIndex];
-                        const descInput = document.getElementById('modal-input-desc').value.substring(0, 50).trim();
-                        const targetGroupId = document.getElementById('modal-input-group').value;
-
-                        addr.name = nameInput;
-                        addr.description = descInput;
-
-                        // NOWOŚĆ: Logika przepisywania adresu do innej grupy
-                        if (targetGroupId !== currentEditingGroupId) {
-                            const newGroup = savedGroups.find(g => g.id === targetGroupId);
-                            if (newGroup) {
-                                // Usuń ze starej grupy i dodaj do nowej
-                                oldGroup.addresses.splice(addrIndex, 1);
-                                newGroup.addresses.push(addr);
-                            }
-                        }
+                        const addr = oldGroup.addresses[addrIndex]; const descInput = document.getElementById('modal-input-desc').value.substring(0, 50).trim(); const targetGroupId = document.getElementById('modal-input-group').value;
+                        addr.name = nameInput; addr.description = descInput;
+                        if (targetGroupId !== currentEditingGroupId) { const newGroup = savedGroups.find(g => g.id === targetGroupId); if (newGroup) { oldGroup.addresses.splice(addrIndex, 1); newGroup.addresses.push(addr); } }
                     }
                 }
             }
@@ -410,26 +367,19 @@
 
         function deleteGroup(groupId, event) {
             event.stopPropagation(); const index = savedGroups.findIndex(g => g.id === groupId); if (index === -1) return;
-            if (savedGroups[index].addresses.length > 0) { if (!confirm("Ta grupa zawiera zapisane adresy. Czy na pewno chcesz usunąć grupę wraz z całą jej zawartością?")) return; } 
-            else { if (!confirm("Usunąć tę grupę?")) return; }
+            if (savedGroups[index].addresses.length > 0) { if (!confirm("Ta grupa zawiera zapisane adresy. Czy na pewno chcesz usunąć grupę wraz z całą jej zawartością?")) return; } else { if (!confirm("Usunąć tę grupę?")) return; }
             savedGroups.splice(index, 1); saveGroupsToStorage();
         }
 
         async function savePermanentAddress() {
             const address = document.getElementById('saved-address-input').value; const groupId = document.getElementById('saved-group-select').value; if (!address || !groupId) return;
             const group = savedGroups.find(g => g.id === groupId); if (!group) return;
-            // Dodajemy &addressdetails=1 dla stałych adresów
             const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&q=${encodeURIComponent(address)}`;
             try {
                 const response = await fetch(url); const data = await response.json();
                 if (data && data.length > 0) {
-                    // Formatowanie do czytelnej struktury
                     const formattedName = formatAddressString(data[0]);
-
-                    group.addresses.push({
-                        id: 'addr_' + Date.now() + Math.floor(Math.random() * 100), lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon),
-                        name: formattedName, description: ""
-                    });
+                    group.addresses.push({ id: 'addr_' + Date.now() + Math.floor(Math.random() * 100), lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), name: formattedName, description: "" });
                     saveGroupsToStorage(); document.getElementById('saved-address-input').value = '';
                 } else { alert("Nie znaleziono adresu."); }
             } catch (error) { alert("Błąd połączenia."); }
@@ -440,13 +390,7 @@
             let duplicatesCount = 0;
             checkboxes.forEach(cb => {
                 const group = savedGroups.find(g => g.id === cb.getAttribute('data-group-id'));
-                if (group) {
-                    const addr = group.addresses.find(a => a.id === cb.getAttribute('data-addr-id'));
-                    if (addr) {
-                        const success = addPointToMapAndList(addr.lat, addr.lon, addr.name, addr.description || "", true);
-                        if (!success) duplicatesCount++;
-                    }
-                }
+                if (group) { const addr = group.addresses.find(a => a.id === cb.getAttribute('data-addr-id')); if (addr) { const success = addPointToMapAndList(addr.lat, addr.lon, addr.name, addr.description || "", true); if (!success) duplicatesCount++; } }
                 cb.checked = false;
             });
             if (duplicatesCount > 0) alert(`Pominięto ${duplicatesCount} adres(ów), ponieważ znajdują się już na bieżącej trasie.`);
@@ -454,8 +398,7 @@
 
         function deleteSavedAddress(groupId, addrId) {
             const group = savedGroups.find(g => g.id === groupId); if (!group) return;
-            const index = group.addresses.findIndex(a => a.id === addrId);
-            if (index !== -1 && confirm("Usunąć ten adres ze stałych?")) { group.addresses.splice(index, 1); saveGroupsToStorage(); }
+            const index = group.addresses.findIndex(a => a.id === addrId); if (index !== -1 && confirm("Usunąć ten adres ze stałych?")) { group.addresses.splice(index, 1); saveGroupsToStorage(); }
         }
 
         function saveGroupsToStorage() { localStorage.setItem('courierSavedGroups', JSON.stringify(savedGroups)); renderSavedAddresses(); }
@@ -502,7 +445,7 @@
                     routeLayer = L.geoJSON(data.trips[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
                     routePoints.forEach((point, index) => { const optIndex = data.waypoints[index].waypoint_index; point.optLabel = optIndex === 0 ? 'B' : optIndex; point.isBase = (optIndex === 0); });
                     updateListUI(); drawAllMarkers(); updateRouteStats(data.trips[0].distance, data.trips[0].duration);
-                    if (!trackingId) map.fitBounds(routeLayer.getBounds()); if (window.innerWidth < 768) togglePanel();
+                    if (!isFollowingGPS) map.fitBounds(routeLayer.getBounds()); if (window.innerWidth < 768) togglePanel();
                 } else { alert("Nie udało się wyznaczyć trasy."); }
             } catch (error) {}
         }
@@ -510,7 +453,7 @@
         async function recalculateRouteLine() {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending');
             routePoints.sort((a, b) => { if (a.isBase) return 1; if (b.isBase) return -1; return (a.optLabel !== undefined ? a.optLabel : 999) - (b.optLabel !== undefined ? b.optLabel : 999); });
-            let coordsArray = []; if (trackingId && lastKnownPosition) coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`);
+            let coordsArray = []; if (lastKnownPosition) coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`);
             routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));
             if (coordsArray.length < 2) { if (routeLayer) map.removeLayer(routeLayer); document.getElementById('route-stats').classList.add('hidden'); return; }
             try {
@@ -532,42 +475,87 @@
             }
         }
 
-        map.on('dragstart', () => { if (trackingId && isFollowingGPS) { isFollowingGPS = false; document.getElementById('center-btn').classList.remove('hidden'); } });
+        map.on('dragstart', () => { if (isFollowingGPS) { isFollowingGPS = false; document.getElementById('center-btn').classList.remove('hidden'); } });
         function recenterMap() { isFollowingGPS = true; document.getElementById('center-btn').classList.add('hidden'); if (lastKnownPosition) { map.panTo(lastKnownPosition); } }
 
-        function toggleTracking() {
-            if (!navigator.geolocation) { alert("Brak obsługi GPS."); return; }
-            const btn = document.getElementById('track-btn'); const centerBtn = document.getElementById('center-btn');
-            if (trackingId) {
-                navigator.geolocation.clearWatch(trackingId); trackingId = null; isFollowingGPS = false; centerBtn.classList.add('hidden'); 
-                if (courierMarker) { map.removeLayer(courierMarker); courierMarker = null; }
-                btn.innerText = "📍 Rozpocznij śledzenie GPS"; btn.className = "btn-warning";
+        // NOWOŚĆ: Przełączanie trybu jazdy (podążania) po kliknięciu „Wyruszam!”
+        function toggleDriveMode() {
+            const btn = document.getElementById('track-btn');
+            if (isFollowingGPS) {
+                isFollowingGPS = false;
+                btn.innerText = "🚀 Wyruszam!";
+                btn.className = "btn-success";
+                btn.style.backgroundColor = "#28a745";
+                document.getElementById('center-btn').classList.add('hidden'); // Ukryj, bo nie jesteśmy w trybie jazdy
             } else {
-                btn.innerText = "⏹ Zakończ śledzenie"; btn.className = "btn-danger"; isFollowingGPS = true;
-                trackingId = navigator.geolocation.watchPosition(
-                    (position) => {
-                        const lat = position.coords.latitude; const lon = position.coords.longitude; const firstFix = !lastKnownPosition; lastKnownPosition = [lat, lon]; 
-                        if (!courierMarker) { courierMarker = L.circleMarker([lat, lon], { color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8 }).addTo(map); } else { courierMarker.setLatLng([lat, lon]); }
-                        if (isFollowingGPS) { map.panTo([lat, lon]); }
-                        if (firstFix && deliveryPoints.filter(p => p.status === 'pending').length >= 1) recalculateRouteLine();
-
-                        let closestPoint = null; let minDistance = 1000; 
-                        deliveryPoints.forEach(pt => { if (pt.status === 'pending') { const dist = map.distance([lat, lon], [pt.lat, pt.lon]); if (dist < minDistance) { minDistance = dist; closestPoint = pt; } } });
-                        const alertDiv = document.getElementById('proximity-alert');
-                        if (closestPoint) {
-                            if (currentClosestId !== closestPoint.id) {
-                                alertDiv.innerHTML = `<div style="font-size:14px; margin-bottom:8px;"><b>Jesteś blisko celu:</b><br><span id="prox-dist">${Math.round(minDistance)}</span>m - ${closestPoint.name}</div><button class="btn-danger" style="margin-bottom:5px; padding:8px;" onclick="updatePointStatus(${closestPoint.id}, 'completed')">✔️ Punkt Zaliczony</button><button class="btn-warning" style="margin-bottom:0; padding:8px;" onclick="updatePointStatus(${closestPoint.id}, 'postponed')">🕒 Przyjadę później</button>`;
-                                alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id;
-                            } else { const distSpan = document.getElementById('prox-dist'); if (distSpan) distSpan.innerText = Math.round(minDistance); }
-                        } else { alertDiv.classList.add('hidden'); currentClosestId = null; }
-                    },
-                    (error) => { alert("Brak GPS."); navigator.geolocation.clearWatch(trackingId); trackingId = null; isFollowingGPS = false; centerBtn.classList.add('hidden'); btn.innerText = "📍 Rozpocznij śledzenie GPS"; btn.className = "btn-warning"; },
-                    { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
-                );
+                isFollowingGPS = true;
+                btn.innerText = "⏹ Zatrzymaj podążanie";
+                btn.className = "btn-danger";
+                btn.style.backgroundColor = "#dc3545";
+                if (lastKnownPosition) {
+                    map.setView(lastKnownPosition, 16); // Wyrównaj i przybliż do jazdy
+                }
             }
         }
 
+        // NOWOŚĆ: AUTOMATYCZNY GPS OD MOMENTU URUCHOMIENIA
+        function initAutomaticGPS() {
+            if (!navigator.geolocation) {
+                alert("Twoje urządzenie nie obsługuje geolokalizacji. GPS nie będzie działać.");
+                return;
+            }
+
+            const options = { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 };
+
+            // watchPosition działa bez przerwy w tle od startu strony
+            trackingId = navigator.geolocation.watchPosition(
+                (position) => {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    lastKnownPosition = [lat, lon];
+
+                    // Rysowanie/przesuwanie czerwonej kropki
+                    if (!courierMarker) {
+                        courierMarker = L.circleMarker([lat, lon], { color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8 }).addTo(map);
+                    } else {
+                        courierMarker.setLatLng([lat, lon]);
+                    }
+
+                    // NOWOŚĆ: Jeśli to pierwsze wykrycie pozycji po włączeniu strony – wyśrodkuj i zbliż (Zoom 16)
+                    if (isFirstGPSFix) {
+                        map.setView([lat, lon], 16);
+                        isFirstGPSFix = false;
+                        // Jeśli na trasie były już jakieś punkty (np. dodane przed fixem GPS), podepnij linię
+                        if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) recalculateRouteLine();
+                    }
+
+                    // Podążanie kamery działa tylko jeśli włączono tryb „Wyruszam!” (isFollowingGPS == true)
+                    if (isFollowingGPS) {
+                        map.panTo([lat, lon]);
+                    }
+
+                    // Logika alertów zbliżeniowych
+                    let closestPoint = null; let minDistance = 1000; 
+                    deliveryPoints.forEach(pt => { if (pt.status === 'pending') { const dist = map.distance([lat, lon], [pt.lat, pt.lon]); if (dist < minDistance) { minDistance = dist; closestPoint = pt; } } });
+                    const alertDiv = document.getElementById('proximity-alert');
+                    if (closestPoint) {
+                        if (currentClosestId !== closestPoint.id) {
+                            alertDiv.innerHTML = `<div style="font-size:14px; margin-bottom:8px;"><b>Jesteś blisko celu:</b><br><span id="prox-dist">${Math.round(minDistance)}</span>m - ${closestPoint.name}</div><button class="btn-danger" style="margin-bottom:5px; padding:8px;" onclick="updatePointStatus(${closestPoint.id}, 'completed')">✔️ Punkt Zaliczony</button><button class="btn-warning" style="margin-bottom:0; padding:8px;" onclick="updatePointStatus(${closestPoint.id}, 'postponed')">🕒 Przyjadę później</button>`;
+                            alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id;
+                        } else { const distSpan = document.getElementById('prox-dist'); if (distSpan) distSpan.innerText = Math.round(minDistance); }
+                    } else { alertDiv.classList.add('hidden'); currentClosestId = null; }
+                },
+                (error) => {
+                    console.error("Błąd GPS przy starcie:", error);
+                    alert("Strona nie ma dostępu do GPS. Upewnij się, że zezwoliłeś przeglądarce na lokalizację i masz włączony GPS w telefonie.");
+                },
+                options
+            );
+        }
+
+        // Odpalenie bazy danych i automatycznego GPS
         renderSavedAddresses();
+        initAutomaticGPS();
     </script>
 </body>
 </html>
