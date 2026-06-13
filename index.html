@@ -61,21 +61,28 @@
         .saved-item { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-bottom: 6px; background: white; padding: 6px; border-radius: 4px; border: 1px solid #eee;}
         .saved-item span.name { flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-        /* ZMIENIONE: Wygląd małego powiadomienia o bliskości punktu */
         @keyframes pulseAlert {
             0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7); }
             70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(255, 193, 7, 0); }
             100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 193, 7, 0); }
         }
         
+        /* ZMIENIONE: Dodano transition i klasę .lifted dla powiadomienia */
         #proximity-alert {
             position: absolute; bottom: 20px; right: 20px; z-index: 1000;
-            background: #ffc107; color: #212529; padding: 12px 18px; border-radius: 25px;
+            background: #ffc107; color: #212529; padding: 10px 14px; border-radius: 20px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid white;
-            font-weight: bold; font-size: 14px; cursor: pointer; text-align: center;
+            font-weight: bold; font-size: 13px; cursor: pointer; text-align: center;
             animation: pulseAlert 2s infinite; white-space: nowrap;
+            transition: bottom 0.3s ease-in-out; /* Płynne podnoszenie/opuszczanie */
+            max-width: 50vw; overflow: hidden; text-overflow: ellipsis;
         }
         #proximity-alert:hover { background: #e0a800; }
+        
+        /* Klasa dodawana, gdy przycisk wyśrodkuj jest widoczny */
+        #proximity-alert.lifted {
+            bottom: 90px;
+        }
 
         #center-btn {
             position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000;
@@ -90,7 +97,6 @@
             font-weight: bold; font-size: 14px; text-align: center;
         }
 
-        /* Wspólne style dla obu okien modalnych */
         .modal-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0, 0, 0, 0.5); z-index: 2000; 
@@ -101,13 +107,11 @@
             box-shadow: 0 10px 25px rgba(0,0,0,0.5); width: 340px; max-width: 90vw;
         }
         
-        /* Modal edycji adresu */
         #edit-modal h3 { margin-top: 0; margin-bottom: 15px; color: #343a40; }
         #edit-modal label { font-size: 13px; font-weight: bold; color: #495057; display: block; margin-bottom: 5px; }
         .modal-buttons { display: flex; gap: 10px; margin-top: 15px; }
         .modal-buttons button { margin-bottom: 0; }
 
-        /* NOWOŚĆ: Modal Akcji Punktu (Zalicz / Później) */
         #action-modal { text-align: center; }
         #action-modal h3 { margin-top: 0; color: #343a40; margin-bottom: 5px; }
         #action-modal-address { font-size: 16px; font-weight: bold; color: #007bff; margin-bottom: 20px; word-wrap: break-word; }
@@ -157,6 +161,7 @@
         </div>
     </div>
 
+    <!-- Modal Edycji Danych -->
     <div id="edit-modal-overlay" class="modal-overlay hidden">
         <div id="edit-modal" class="modal-box">
             <h3 id="modal-title">Edycja elementu</h3>
@@ -178,6 +183,7 @@
         </div>
     </div>
 
+    <!-- Modal Akcji (Zalicz/Później) -->
     <div id="action-modal-overlay" class="modal-overlay hidden">
         <div id="action-modal" class="modal-box">
             <h3>Jesteś na miejscu!</h3>
@@ -215,8 +221,6 @@
         let currentEditingType = null; 
         let currentEditingGroupId = null;
         let currentEditingAddressId = null;
-
-        // NOWOŚĆ: Pamięć dla modala akcji
         let currentActionPointId = null;
 
         let savedGroups = [];
@@ -467,7 +471,6 @@
             const pt = deliveryPoints.find(p => p.id === id);
             if(pt) {
                 pt.status = newStatus; map.closePopup();
-                // Jeśli kliknęliśmy z dymka, trzeba też ewentualnie schować dolne powiadomienie
                 if(currentClosestId === id) { document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null; }
                 updateListUI(); drawAllMarkers(); recalculateRouteLine(); 
             }
@@ -513,49 +516,49 @@
             }
         }
 
-        map.on('dragstart', () => { if (isFollowingGPS) { isFollowingGPS = false; document.getElementById('center-btn').classList.remove('hidden'); } });
-        function recenterMap() { isFollowingGPS = true; document.getElementById('center-btn').classList.add('hidden'); if (lastKnownPosition) { map.panTo(lastKnownPosition); } }
+        // ZMIENIONE: Dodano dodawanie klasy .lifted
+        map.on('dragstart', () => { 
+            if (isFollowingGPS) { 
+                isFollowingGPS = false; 
+                document.getElementById('center-btn').classList.remove('hidden'); 
+                document.getElementById('proximity-alert').classList.add('lifted'); // Podniesienie powiadomienia
+            } 
+        });
+        
+        // ZMIENIONE: Usunięcie klasy .lifted
+        function recenterMap() { 
+            isFollowingGPS = true; 
+            document.getElementById('center-btn').classList.add('hidden'); 
+            document.getElementById('proximity-alert').classList.remove('lifted'); // Opuszczenie powiadomienia
+            if (lastKnownPosition) { map.panTo(lastKnownPosition); } 
+        }
 
-        // NOWOŚĆ: Zwijanie menu przy włączaniu podążania
         function toggleDriveMode() {
             const btn = document.getElementById('track-btn');
             if (isFollowingGPS) {
                 isFollowingGPS = false;
                 btn.innerText = "🚀 Wyruszam!"; btn.className = "btn-success"; btn.style.backgroundColor = "#28a745";
                 document.getElementById('center-btn').classList.add('hidden'); 
+                document.getElementById('proximity-alert').classList.remove('lifted'); // Opuść, bo nie ma przycisku wyśrodkuj
             } else {
                 isFollowingGPS = true;
                 btn.innerText = "⏹ Zatrzymaj podążanie"; btn.className = "btn-danger"; btn.style.backgroundColor = "#dc3545";
                 if (lastKnownPosition) map.setView(lastKnownPosition, 16);
                 
-                // Samoczynne zwinięcie panelu, jeśli jest otwarty
                 const content = document.getElementById('ui-content');
-                if (!content.classList.contains('hidden')) {
-                    togglePanel();
-                }
+                if (!content.classList.contains('hidden')) { togglePanel(); }
             }
         }
 
-        // NOWE FUNKCJE: Obsługa centralnego okienka akcji
         function openActionModal(pointId) {
-            const pt = deliveryPoints.find(p => p.id === pointId);
-            if (!pt) return;
-            currentActionPointId = pointId;
-            document.getElementById('action-modal-address').innerText = pt.name;
+            const pt = deliveryPoints.find(p => p.id === pointId); if (!pt) return;
+            currentActionPointId = pointId; document.getElementById('action-modal-address').innerText = pt.name;
             document.getElementById('action-modal-overlay').classList.remove('hidden');
         }
 
-        function closeActionModal() {
-            document.getElementById('action-modal-overlay').classList.add('hidden');
-            currentActionPointId = null;
-        }
+        function closeActionModal() { document.getElementById('action-modal-overlay').classList.add('hidden'); currentActionPointId = null; }
 
-        function confirmPointAction(status) {
-            if (currentActionPointId) {
-                updatePointStatus(currentActionPointId, status);
-                closeActionModal();
-            }
-        }
+        function confirmPointAction(status) { if (currentActionPointId) { updatePointStatus(currentActionPointId, status); closeActionModal(); } }
 
         function initAutomaticGPS() {
             if (!navigator.geolocation) { alert("Urządzenie nie obsługuje geolokalizacji."); return; }
@@ -573,7 +576,6 @@
                     if (closestPoint) {
                         const shortAddr = closestPoint.name.split(',')[0];
                         if (currentClosestId !== closestPoint.id) {
-                            // NOWOŚĆ: Mniejsze powiadomienie z opcją kliknięcia (otwiera modal)
                             alertDiv.innerHTML = `📍 Cel blisko (<span id="prox-dist">${Math.round(minDistance)}</span>m)<br><small>${shortAddr}</small>`;
                             alertDiv.onclick = function() { openActionModal(closestPoint.id); };
                             alertDiv.classList.remove('hidden'); 
