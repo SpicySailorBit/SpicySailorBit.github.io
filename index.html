@@ -111,7 +111,6 @@
             <details id="permanent-section">
                 <summary style="font-weight: bold; cursor: pointer; margin-bottom: 5px;">📂 Stałe adresy (Zapisane)</summary>
                 <div style="margin-top: 10px;">
-                    
                     <button class="btn-info" style="background-color: #20c997; padding: 6px; font-size: 13px;" onclick="createNewGroup()">📁 + Nowa grupa</button>
                     
                     <label style="font-size: 12px; font-weight: bold; color: #555;">Wybierz grupę zapisu:</label>
@@ -166,6 +165,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
+        // 1. INICJALIZACJA MAPY
         const map = L.map('map', { zoomControl: false }).setView([51.9194, 19.1451], 6);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
@@ -176,7 +176,6 @@
         let trackingId = null;
         let courierMarker = null;
         let currentClosestId = null; 
-        
         let isFollowingGPS = false;
         let lastKnownPosition = null;
 
@@ -184,24 +183,33 @@
         let currentEditingGroupId = null;
         let currentEditingAddressId = null;
 
+        // 2. BEZPIECZNE ŁADOWANIE PAMIĘCI
         let savedGroups = [];
-        const rawGroups = localStorage.getItem('courierSavedGroups');
-        
-        if (rawGroups) {
-            savedGroups = JSON.parse(rawGroups);
-        } else {
-            const oldFlatData = localStorage.getItem('courierSavedAddresses');
-            if (oldFlatData) {
-                const oldAddresses = JSON.parse(oldFlatData);
-                savedGroups = [{
-                    id: 'group_default', name: 'Ogólne',
-                    addresses: oldAddresses.map(a => ({
-                        id: 'addr_' + Date.now() + Math.floor(Math.random() * 100),
-                        lat: a.lat, lon: a.lon, name: a.name.split(',')[0], description: ''
-                    }))
-                }];
-            } else { savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }]; }
-            localStorage.setItem('courierSavedGroups', JSON.stringify(savedGroups));
+        try {
+            const rawGroups = localStorage.getItem('courierSavedGroups');
+            if (rawGroups) {
+                savedGroups = JSON.parse(rawGroups);
+            } else {
+                const oldFlatData = localStorage.getItem('courierSavedAddresses');
+                if (oldFlatData) {
+                    const oldAddresses = JSON.parse(oldFlatData);
+                    savedGroups = [{
+                        id: 'group_default', name: 'Ogólne',
+                        addresses: oldAddresses.map((a, idx) => ({
+                            id: 'addr_' + Date.now() + '_' + idx,
+                            lat: a.lat, lon: a.lon, 
+                            name: a.name ? a.name.split(',')[0] : 'Nieznany adres', 
+                            description: ''
+                        }))
+                    }];
+                } else {
+                    savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }];
+                }
+                localStorage.setItem('courierSavedGroups', JSON.stringify(savedGroups));
+            }
+        } catch (e) {
+            console.error("Błąd pamięci lokalnej, resetuję dane stałych adresów", e);
+            savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }];
         }
 
         function togglePanel() {
@@ -217,27 +225,30 @@
             try {
                 const response = await fetch(url); const data = await response.json();
                 if (data && data.length > 0) {
-                    // NOWOŚĆ: Skrypt teraz pobiera wynik działania funkcji (czy dodano)
-                    const success = addPointToMapAndList(parseFloat(data[0].lat), parseFloat(data[0].lon), data[0].display_name, "");
-                    // Jeśli sukces, to czyści pole wpisywania
-                    if (success) document.getElementById('address-input').value = '';
+                    // Wywołanie z blokadą duplikatów
+                    const isAdded = addPointToMapAndList(parseFloat(data[0].lat), parseFloat(data[0].lon), data[0].display_name, "");
+                    if (isAdded) document.getElementById('address-input').value = '';
                 } else { alert("Nie udało się znaleźć adresu."); }
             } catch (error) { alert("Wystąpił problem z połączeniem."); }
         }
 
-        // NOWOŚĆ: Funkcja z logiką sprawdzania duplikatów i flagą 'silent' (cichy tryb dla dodawania masowego)
+        // 3. NOWOŚĆ: BEZPIECZNA FUNKCJA DODAWANIA (Z BLOKADĄ DUPLIKATÓW)
         function addPointToMapAndList(lat, lon, name, description = "", silent = false) {
-            // Blokada: Szukamy punktu z identycznymi współrzędnymi
-            const isDuplicate = deliveryPoints.some(p => p.lat === lat && p.lon === lon);
+            // Szukamy, czy istnieje punkt (o statusie 'pending'), który leży dokładnie w tym samym miejscu
+            const isDuplicate = deliveryPoints.some(p => Math.abs(p.lat - lat) < 0.0001 && Math.abs(p.lon - lon) < 0.0001 && p.status === 'pending');
             
             if (isDuplicate) {
-                if (!silent) alert(`Adres jest już dodany do bieżącej trasy!\n(${name.split(',')[0]})`);
-                return false; // Przerwij dodawanie
+                if (!silent) {
+                    alert(`Ten adres jest już na aktywnej trasie!\n(${name.split(',')[0]})`);
+                }
+                return false; // Nie powiodło się (duplikat)
             }
 
             const id = Date.now() + Math.floor(Math.random() * 1000);
             deliveryPoints.push({ id: id, lat: lat, lon: lon, name: name, description: description, status: 'pending' });
-            updateListUI(); drawAllMarkers(); map.setView([lat, lon], 13);
+            updateListUI(); 
+            drawAllMarkers(); 
+            map.setView([lat, lon], 13);
             return true; // Sukces
         }
 
@@ -374,7 +385,7 @@
             } catch (error) { alert("Błąd połączenia."); }
         }
 
-        // NOWOŚĆ: Logika zliczania pominiętych duplikatów przy dodawaniu masowym
+        // 4. NOWOŚĆ: GRUPOWE DODAWANIE Z BLOKADĄ
         function addSelectedSaved() {
             const checkboxes = document.querySelectorAll('.saved-checkbox:checked'); 
             if(checkboxes.length === 0) { alert("Zaznacz najpierw adresy z grup."); return; }
@@ -386,15 +397,15 @@
                 if (group) {
                     const addr = group.addresses.find(a => a.id === cb.getAttribute('data-addr-id'));
                     if (addr) {
-                        // Flaga 'true' oznacza, że dodajemy cicho (bez alertów dla każdego adresu)
-                        const added = addPointToMapAndList(addr.lat, addr.lon, addr.name, addr.description || "", true);
-                        if (!added) duplicatesCount++; // Jeśli się nie udało dodać, zwiększamy licznik duplikatów
+                        // Flaga 'true' zapobiega wyskakiwaniu alertu dla pojedynczego adresu
+                        const success = addPointToMapAndList(addr.lat, addr.lon, addr.name, addr.description || "", true);
+                        if (!success) duplicatesCount++; // Liczymy zablokowane adresy
                     }
                 }
-                cb.checked = false; // Odznaczamy checkbox po akcji
+                cb.checked = false;
             });
 
-            // Wyświetlamy alert ze zbiorczym podsumowaniem odrzuceń
+            // Zbiorczy alert
             if (duplicatesCount > 0) {
                 alert(`Pominięto ${duplicatesCount} adres(ów), ponieważ znajdują się już na bieżącej trasie.`);
             }
