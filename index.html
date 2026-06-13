@@ -39,15 +39,14 @@
         #points-list { margin-top: 10px; padding-left: 20px; font-size: 14px; max-height: 100px; overflow-y: auto; }
         hr { border: 0; height: 1px; background: #ddd; margin: 15px 0; }
 
-        /* NOWE: Kolory dla różnych statusów punktów */
         .custom-marker {
             background-color: #007bff; color: white; border-radius: 50%;
             text-align: center; line-height: 28px; font-size: 14px;
             font-weight: bold; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.5);
         }
-        .custom-marker.baza { background-color: #28a745; } /* Zielony */
-        .custom-marker.zaliczony { background-color: #dc3545; } /* Czerwony */
-        .custom-marker.pozniej { background-color: #ffc107; color: #212529; } /* Żółty */
+        .custom-marker.baza { background-color: #28a745; } 
+        .custom-marker.zaliczony { background-color: #dc3545; } 
+        .custom-marker.pozniej { background-color: #ffc107; color: #212529; } 
 
         details { background: #f8f9fa; padding: 10px; border-radius: 4px; border: 1px solid #ddd; margin-bottom: 15px; }
         summary { font-weight: bold; cursor: pointer; outline: none; margin-bottom: 5px; }
@@ -56,13 +55,21 @@
         .saved-item span.name { flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .saved-item span.delete { color: #dc3545; cursor: pointer; font-weight: bold; padding: 0 5px; }
 
-        /* NOWE: Wygląd powiadomienia o bliskości punktu */
         #proximity-alert {
             position: absolute; bottom: 20px; right: 20px; z-index: 1000;
             background: white; padding: 15px; border-radius: 8px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid #007bff;
             width: 250px; max-width: 80vw;
         }
+
+        /* NOWOŚĆ: Wygląd przycisku Wyśrodkuj na środku u dołu */
+        #center-btn {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000;
+            background-color: #007bff; color: white; padding: 12px 24px; border: none; border-radius: 25px;
+            font-weight: bold; font-size: 16px; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+            width: auto; margin-bottom: 0; display: inline-block;
+        }
+        #center-btn:hover { background-color: #0056b3; }
     </style>
 </head>
 <body>
@@ -99,6 +106,8 @@
     </div>
 
     <div id="proximity-alert" class="hidden"></div>
+    
+    <button id="center-btn" class="hidden" onclick="recenterMap()">🎯 Wyśrodkuj</button>
 
     <div id="map"></div>
 
@@ -108,13 +117,17 @@
         const map = L.map('map', { zoomControl: false }).setView([51.9194, 19.1451], 6);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
-        // Zmodyfikowana struktura: każdy punkt ma swoje ID i Status ('pending', 'completed', 'postponed')
         let deliveryPoints = [];
         let routeLayer = null; 
         let markersLayer = L.layerGroup().addTo(map);
+        
         let trackingId = null;
         let courierMarker = null;
-        let currentClosestId = null; // Pamięta, który punkt jest aktualnie w powiadomieniu
+        let currentClosestId = null; 
+        
+        // NOWE ZMIENNE: Zarządzanie stanem kamery
+        let isFollowingGPS = false;
+        let lastKnownPosition = null;
 
         let savedAddresses = JSON.parse(localStorage.getItem('courierSavedAddresses')) || [];
 
@@ -145,7 +158,6 @@
         }
 
         function addPointToMapAndList(lat, lon, name) {
-            // Nadajemy unikalne ID każdemu punktowi
             const id = Date.now() + Math.floor(Math.random() * 1000);
             deliveryPoints.push({ id: id, lat: lat, lon: lon, name: name, status: 'pending' });
             updateListUI();
@@ -161,9 +173,8 @@
                 const shortName = point.name.split(',')[0] + ', ' + point.name.split(',')[1];
                 let prefix = point.optLabel !== undefined ? `${point.isBase ? '[BAZA]' : point.optLabel}. ` : '- ';
                 
-                // Przekreśl na liście, jeśli zaliczone
                 if (point.status === 'completed') { li.style.textDecoration = 'line-through'; li.style.color = 'red'; }
-                if (point.status === 'postponed') { li.style.color = '#d39e00'; } // Ciemny żółty
+                if (point.status === 'postponed') { li.style.color = '#d39e00'; }
                 
                 li.innerText = `${prefix}${shortName}`;
                 listElement.appendChild(li);
@@ -205,7 +216,6 @@
             if(confirm("Usunąć ze stałych?")) { savedAddresses.splice(index, 1); localStorage.setItem('courierSavedAddresses', JSON.stringify(savedAddresses)); renderSavedAddresses(); }
         }
 
-        // NOWOŚĆ: Główna funkcja rysująca punkty z odpowiednimi kolorami i przyciskami
         function drawAllMarkers() {
             markersLayer.clearLayers();
             deliveryPoints.forEach((point) => {
@@ -215,10 +225,8 @@
                 else if (point.isBase) className += ' baza';
 
                 const label = point.optLabel !== undefined ? point.optLabel : '';
-
                 const customIcon = L.divIcon({ className: className, html: label, iconSize: [32, 32], iconAnchor: [16, 16] });
 
-                // Tworzymy interaktywny Popup (dymek) po kliknięciu w punkt na mapie
                 const popupHtml = `
                     <div style="font-size: 13px;">
                         <b>Kolejność: ${point.isBase ? 'Baza' : (point.optLabel !== undefined ? point.optLabel : 'Brak')}</b><br>
@@ -241,26 +249,16 @@
             });
         }
 
-        // NOWOŚĆ: Zmiana statusu punktu wywoływana z popupa lub powiadomienia na dole
         window.updatePointStatus = function(id, newStatus) {
             const pt = deliveryPoints.find(p => p.id === id);
             if(pt) {
                 pt.status = newStatus;
-                map.closePopup(); // Zamknij otwarty dymek, jeśli był
-                
-                // Ukryj alert na dole, jeśli modyfikujemy punkt, koło którego stoimy
-                if(currentClosestId === id) {
-                    document.getElementById('proximity-alert').classList.add('hidden');
-                    currentClosestId = null;
-                }
-
-                updateListUI();
-                drawAllMarkers();
-                recalculateRouteLine(); // Przelicz niebieską trasę na nowo
+                map.closePopup();
+                if(currentClosestId === id) { document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null; }
+                updateListUI(); drawAllMarkers(); recalculateRouteLine(); 
             }
         }
 
-        // Pierwsza optymalizacja całej trasy z nadaniem numerów
         async function optimizeRoute() {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending');
             if (routePoints.length < 2) { alert("Musisz dodać co najmniej 2 punkty!"); return; }
@@ -275,15 +273,13 @@
                     if (routeLayer) map.removeLayer(routeLayer);
                     routeLayer = L.geoJSON(data.trips[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
                     
-                    // Nadajemy niezmienne numery (optLabel)
                     routePoints.forEach((point, index) => {
                         const optIndex = data.waypoints[index].waypoint_index;
                         point.optLabel = optIndex === 0 ? 'B' : optIndex;
                         point.isBase = (optIndex === 0);
                     });
 
-                    updateListUI();
-                    drawAllMarkers();
+                    updateListUI(); drawAllMarkers();
 
                     if (!trackingId) map.fitBounds(routeLayer.getBounds());
                     if (window.innerWidth < 768) togglePanel();
@@ -291,13 +287,9 @@
             } catch (error) {}
         }
 
-        // NOWOŚĆ: Przeliczanie samej niebieskiej linii z pominięciem punktów zaliczonych
         async function recalculateRouteLine() {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending');
-            if (routePoints.length < 2) {
-                if (routeLayer) map.removeLayer(routeLayer);
-                return;
-            }
+            if (routePoints.length < 2) { if (routeLayer) map.removeLayer(routeLayer); return; }
             const coordinatesString = routePoints.map(p => `${p.lon},${p.lat}`).join(';');
             const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordinatesString}?source=first&roundtrip=true&overview=full&geometries=geojson`;
             try {
@@ -318,33 +310,59 @@
             }
         }
 
+        // NOWOŚĆ: Reakcja na przesuwanie mapy palcem
+        map.on('dragstart', () => {
+            // Jeśli obecnie śledzimy GPS i użytkownik dotknie/przesunie mapę
+            if (trackingId && isFollowingGPS) {
+                isFollowingGPS = false; // Przestań podążać kamerą za kropką
+                document.getElementById('center-btn').classList.remove('hidden'); // Pokaż przycisk "Wyśrodkuj"
+            }
+        });
+
+        // NOWOŚĆ: Funkcja do ręcznego wyśrodkowania po zakończeniu oglądania mapy
+        function recenterMap() {
+            isFollowingGPS = true; // Wznów podążanie
+            document.getElementById('center-btn').classList.add('hidden'); // Ukryj przycisk
+            if (lastKnownPosition) {
+                map.panTo(lastKnownPosition); // Natychmiast przesuń kamerę z powrotem do kropki
+            }
+        }
+
         function toggleTracking() {
             if (!navigator.geolocation) { alert("Brak obsługi GPS."); return; }
             const btn = document.getElementById('track-btn');
+            const centerBtn = document.getElementById('center-btn');
+
             if (trackingId) {
                 navigator.geolocation.clearWatch(trackingId); trackingId = null;
+                isFollowingGPS = false; // Reset śledzenia kamery
+                centerBtn.classList.add('hidden'); // Ukryj przycisk wyśrodkuj, jeśli wyłączamy GPS
                 if (courierMarker) { map.removeLayer(courierMarker); courierMarker = null; }
                 btn.innerText = "📍 Rozpocznij śledzenie GPS"; btn.className = "btn-warning";
             } else {
                 btn.innerText = "⏹ Zakończ śledzenie"; btn.className = "btn-danger";
+                isFollowingGPS = true; // Zaczynamy śledzenie = kamera podąża za kropką
+
                 trackingId = navigator.geolocation.watchPosition(
                     (position) => {
                         const lat = position.coords.latitude; const lon = position.coords.longitude;
+                        lastKnownPosition = [lat, lon]; // Zapisz aktualną pozycję
+
                         if (!courierMarker) { courierMarker = L.circleMarker([lat, lon], { color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8 }).addTo(map); } 
                         else { courierMarker.setLatLng([lat, lon]); }
-                        map.panTo([lat, lon]);
+                        
+                        // Przesuwaj kamerę TYLKO jeśli flaga isFollowingGPS jest włączona
+                        if (isFollowingGPS) {
+                            map.panTo([lat, lon]);
+                        }
 
-                        // NOWOŚĆ: Logika wykrywania bliskości punktu (Alert Zbliżeniowy)
                         let closestPoint = null;
-                        let minDistance = 1000; // Granica to 1000 metrów (1km)
+                        let minDistance = 1000; 
 
                         deliveryPoints.forEach(pt => {
                             if (pt.status === 'pending') {
                                 const dist = map.distance([lat, lon], [pt.lat, pt.lon]);
-                                if (dist < minDistance) {
-                                    minDistance = dist;
-                                    closestPoint = pt;
-                                }
+                                if (dist < minDistance) { minDistance = dist; closestPoint = pt; }
                             }
                         });
 
@@ -359,21 +377,16 @@
                                     <button class="btn-danger" style="margin-bottom: 5px; padding: 8px;" onclick="updatePointStatus(${closestPoint.id}, 'completed')">✔️ Punkt Zaliczony</button>
                                     <button class="btn-warning" style="margin-bottom: 0; padding: 8px;" onclick="updatePointStatus(${closestPoint.id}, 'postponed')">🕒 Przyjadę później</button>
                                 `;
-                                alertDiv.classList.remove('hidden');
-                                currentClosestId = closestPoint.id;
+                                alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id;
                             } else {
-                                // Aktualizuje tylko metry, żeby nie przerywać klikania przycisku
                                 const distSpan = document.getElementById('prox-dist');
                                 if (distSpan) distSpan.innerText = Math.round(minDistance);
                             }
-                        } else {
-                            alertDiv.classList.add('hidden');
-                            currentClosestId = null;
-                        }
-
+                        } else { alertDiv.classList.add('hidden'); currentClosestId = null; }
                     },
                     (error) => {
                         alert("Brak dostępu do lokalizacji."); navigator.geolocation.clearWatch(trackingId); trackingId = null;
+                        isFollowingGPS = false; centerBtn.classList.add('hidden');
                         btn.innerText = "📍 Rozpocznij śledzenie GPS"; btn.className = "btn-warning";
                     }, { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
                 );
