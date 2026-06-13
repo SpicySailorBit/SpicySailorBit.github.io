@@ -13,18 +13,14 @@
         
         #ui-panel {
             position: absolute; top: 10px; right: 10px; z-index: 1000;
-            background: white; border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3); 
-            width: 320px; max-width: 90vw;
-            display: flex; flex-direction: column;
-            max-height: 95vh; overflow-y: auto; /* Pozwala na przewijanie panelu na bardzo małych ekranach */
+            background: white; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); 
+            width: 320px; max-width: 90vw; display: flex; flex-direction: column;
+            max-height: 95vh; overflow-y: auto;
         }
         
         #ui-header {
-            background-color: #343a40; color: white; padding: 15px;
-            border-radius: 8px; cursor: pointer;
-            display: flex; justify-content: space-between; align-items: center;
-            font-weight: bold; font-size: 16px; position: sticky; top: 0; z-index: 2;
+            background-color: #343a40; color: white; padding: 15px; border-radius: 8px; cursor: pointer;
+            display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 16px; position: sticky; top: 0; z-index: 2;
         }
         
         #ui-panel:not(.collapsed) #ui-header { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
@@ -33,38 +29,40 @@
         
         input[type="text"] { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;}
         
-        button {
-            width: 100%; padding: 10px; color: white;
-            border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px;
-        }
-        .btn-primary { background-color: #007bff; }
-        .btn-primary:hover { background-color: #0056b3; }
-        .btn-success { background-color: #28a745; }
-        .btn-success:hover { background-color: #218838; }
-        .btn-warning { background-color: #ffc107; color: #212529; }
-        .btn-warning:hover { background-color: #e0a800; }
-        .btn-danger { background-color: #dc3545; }
-        .btn-danger:hover { background-color: #c82333; }
-        .btn-info { background-color: #17a2b8; }
-        .btn-info:hover { background-color: #138496; }
+        button { width: 100%; padding: 10px; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
+        .btn-primary { background-color: #007bff; } .btn-primary:hover { background-color: #0056b3; }
+        .btn-success { background-color: #28a745; } .btn-success:hover { background-color: #218838; }
+        .btn-warning { background-color: #ffc107; color: #212529; } .btn-warning:hover { background-color: #e0a800; }
+        .btn-danger { background-color: #dc3545; } .btn-danger:hover { background-color: #c82333; }
+        .btn-info { background-color: #17a2b8; } .btn-info:hover { background-color: #138496; }
         
         #points-list { margin-top: 10px; padding-left: 20px; font-size: 14px; max-height: 100px; overflow-y: auto; }
         hr { border: 0; height: 1px; background: #ddd; margin: 15px 0; }
 
+        /* NOWE: Kolory dla różnych statusów punktów */
         .custom-marker {
             background-color: #007bff; color: white; border-radius: 50%;
             text-align: center; line-height: 28px; font-size: 14px;
             font-weight: bold; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.5);
         }
-        .custom-marker.baza { background-color: #28a745; }
+        .custom-marker.baza { background-color: #28a745; } /* Zielony */
+        .custom-marker.zaliczony { background-color: #dc3545; } /* Czerwony */
+        .custom-marker.pozniej { background-color: #ffc107; color: #212529; } /* Żółty */
 
-        /* Style dla listy stałych adresów */
         details { background: #f8f9fa; padding: 10px; border-radius: 4px; border: 1px solid #ddd; margin-bottom: 15px; }
         summary { font-weight: bold; cursor: pointer; outline: none; margin-bottom: 5px; }
         #saved-points-list { list-style: none; padding-left: 0; max-height: 150px; overflow-y: auto; margin-top: 10px; }
         .saved-item { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 8px; background: white; padding: 5px; border-radius: 4px; border: 1px solid #eee;}
         .saved-item span.name { flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .saved-item span.delete { color: #dc3545; cursor: pointer; font-weight: bold; padding: 0 5px; }
+
+        /* NOWE: Wygląd powiadomienia o bliskości punktu */
+        #proximity-alert {
+            position: absolute; bottom: 20px; right: 20px; z-index: 1000;
+            background: white; padding: 15px; border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid #007bff;
+            width: 250px; max-width: 80vw;
+        }
     </style>
 </head>
 <body>
@@ -84,25 +82,23 @@
                 <div style="margin-top: 10px;">
                     <input type="text" id="saved-address-input" placeholder="Dodaj nowy stały adres">
                     <button class="btn-info" onclick="savePermanentAddress()">💾 Zapisz w stałych</button>
-                    
                     <ul id="saved-points-list"></ul>
-                    
-                    <button class="btn-success" style="margin-bottom: 0;" onclick="addSelectedSaved()">✔️ Dodaj zaznaczone do trasy</button>
+                    <button class="btn-success" style="margin-bottom: 0;" onclick="addSelectedSaved()">✔️ Dodaj zaznaczone</button>
                 </div>
             </details>
             
             <button class="btn-success" onclick="optimizeRoute()">🛣️ Wyznacz trasę</button>
-            
             <hr>
-            
             <button id="track-btn" class="btn-warning" onclick="toggleTracking()">📍 Rozpocznij śledzenie GPS</button>
             
-            <h4 style="margin-bottom: 5px; margin-top: 10px;">Lista adresów na mapie:</h4>
+            <h4 style="margin-bottom: 5px; margin-top: 10px;">Lista punktów:</h4>
             <ul id="points-list"></ul>
             
             <button class="btn-danger" style="margin-top: 10px; background-color: #6c757d;" onclick="clearAll()">🗑️ Wyczyść mapę</button>
         </div>
     </div>
+
+    <div id="proximity-alert" class="hidden"></div>
 
     <div id="map"></div>
 
@@ -112,13 +108,14 @@
         const map = L.map('map', { zoomControl: false }).setView([51.9194, 19.1451], 6);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
+        // Zmodyfikowana struktura: każdy punkt ma swoje ID i Status ('pending', 'completed', 'postponed')
         let deliveryPoints = [];
         let routeLayer = null; 
         let markersLayer = L.layerGroup().addTo(map);
         let trackingId = null;
         let courierMarker = null;
+        let currentClosestId = null; // Pamięta, który punkt jest aktualnie w powiadomieniu
 
-        // Pobieramy stałe adresy z pamięci przeglądarki (lub tworzymy pustą listę)
         let savedAddresses = JSON.parse(localStorage.getItem('courierSavedAddresses')) || [];
 
         function togglePanel() {
@@ -141,45 +138,44 @@
                 const response = await fetch(url);
                 const data = await response.json();
                 if (data && data.length > 0) {
-                    const lat = parseFloat(data[0].lat); const lon = parseFloat(data[0].lon); const name = data[0].display_name;
-                    addPointToMapAndList(lat, lon, name);
+                    addPointToMapAndList(parseFloat(data[0].lat), parseFloat(data[0].lon), data[0].display_name);
                     document.getElementById('address-input').value = '';
                 } else { alert("Nie udało się znaleźć adresu."); }
             } catch (error) { alert("Wystąpił problem z połączeniem."); }
         }
 
-        // Funkcja pomocnicza do dodawania na mapę
         function addPointToMapAndList(lat, lon, name) {
-            L.marker([lat, lon]).addTo(markersLayer).bindPopup(name);
-            map.setView([lat, lon], 13);
-            deliveryPoints.push({ lat: lat, lon: lon, name: name });
+            // Nadajemy unikalne ID każdemu punktowi
+            const id = Date.now() + Math.floor(Math.random() * 1000);
+            deliveryPoints.push({ id: id, lat: lat, lon: lon, name: name, status: 'pending' });
             updateListUI();
+            drawAllMarkers();
+            map.setView([lat, lon], 13);
         }
 
         function updateListUI() {
             const listElement = document.getElementById('points-list');
             listElement.innerHTML = ''; 
-            deliveryPoints.forEach((point, index) => {
+            deliveryPoints.forEach((point) => {
                 const li = document.createElement('li');
                 const shortName = point.name.split(',')[0] + ', ' + point.name.split(',')[1];
-                li.innerText = `${index === 0 ? '[BAZA] ' : ''}${shortName}`;
+                let prefix = point.optLabel !== undefined ? `${point.isBase ? '[BAZA]' : point.optLabel}. ` : '- ';
+                
+                // Przekreśl na liście, jeśli zaliczone
+                if (point.status === 'completed') { li.style.textDecoration = 'line-through'; li.style.color = 'red'; }
+                if (point.status === 'postponed') { li.style.color = '#d39e00'; } // Ciemny żółty
+                
+                li.innerText = `${prefix}${shortName}`;
                 listElement.appendChild(li);
             });
         }
 
-        // NOWE FUNKCJE: Zarządzanie stałymi adresami
         function renderSavedAddresses() {
-            const list = document.getElementById('saved-points-list');
-            list.innerHTML = '';
+            const list = document.getElementById('saved-points-list'); list.innerHTML = '';
             savedAddresses.forEach((pt, index) => {
                 const shortName = pt.name.split(',')[0] + ', ' + pt.name.split(',')[1];
-                const li = document.createElement('li');
-                li.className = 'saved-item';
-                li.innerHTML = `
-                    <input type="checkbox" class="saved-checkbox" value="${index}">
-                    <span class="name" title="${pt.name}">${shortName}</span>
-                    <span class="delete" onclick="deleteSavedAddress(${index})" title="Usuń ze stałych">✖</span>
-                `;
+                const li = document.createElement('li'); li.className = 'saved-item';
+                li.innerHTML = `<input type="checkbox" class="saved-checkbox" value="${index}"><span class="name" title="${pt.name}">${shortName}</span><span class="delete" onclick="deleteSavedAddress(${index})" title="Usuń">✖</span>`;
                 list.appendChild(li);
             });
         }
@@ -187,52 +183,122 @@
         async function savePermanentAddress() {
             const address = document.getElementById('saved-address-input').value;
             if (!address) return;
-            
             const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
             try {
                 const response = await fetch(url);
                 const data = await response.json();
                 if (data && data.length > 0) {
-                    const newSaved = {
-                        lat: parseFloat(data[0].lat),
-                        lon: parseFloat(data[0].lon),
-                        name: data[0].display_name
-                    };
-                    savedAddresses.push(newSaved);
-                    // Zapisujemy do pamięci przeglądarki
+                    savedAddresses.push({ lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), name: data[0].display_name });
                     localStorage.setItem('courierSavedAddresses', JSON.stringify(savedAddresses));
-                    renderSavedAddresses();
-                    document.getElementById('saved-address-input').value = '';
-                    alert("Adres został zapisany w stałych!");
-                } else { alert("Nie udało się znaleźć tego adresu."); }
-            } catch (error) { alert("Błąd połączenia."); }
+                    renderSavedAddresses(); document.getElementById('saved-address-input').value = '';
+                }
+            } catch (error) {}
         }
 
         function addSelectedSaved() {
-            const checkboxes = document.querySelectorAll('.saved-checkbox:checked');
-            if(checkboxes.length === 0) {
-                alert("Zaznacz najpierw adresy, które chcesz dodać.");
-                return;
-            }
-            
-            checkboxes.forEach(cb => {
-                const pt = savedAddresses[cb.value];
-                addPointToMapAndList(pt.lat, pt.lon, pt.name);
-                cb.checked = false; // Odznacz po dodaniu
+            document.querySelectorAll('.saved-checkbox:checked').forEach(cb => {
+                const pt = savedAddresses[cb.value]; addPointToMapAndList(pt.lat, pt.lon, pt.name); cb.checked = false;
             });
         }
 
         function deleteSavedAddress(index) {
-            if(confirm("Czy na pewno chcesz usunąć ten adres ze stałych?")) {
-                savedAddresses.splice(index, 1);
-                localStorage.setItem('courierSavedAddresses', JSON.stringify(savedAddresses));
-                renderSavedAddresses();
+            if(confirm("Usunąć ze stałych?")) { savedAddresses.splice(index, 1); localStorage.setItem('courierSavedAddresses', JSON.stringify(savedAddresses)); renderSavedAddresses(); }
+        }
+
+        // NOWOŚĆ: Główna funkcja rysująca punkty z odpowiednimi kolorami i przyciskami
+        function drawAllMarkers() {
+            markersLayer.clearLayers();
+            deliveryPoints.forEach((point) => {
+                let className = 'custom-marker';
+                if (point.status === 'completed') className += ' zaliczony';
+                else if (point.status === 'postponed') className += ' pozniej';
+                else if (point.isBase) className += ' baza';
+
+                const label = point.optLabel !== undefined ? point.optLabel : '';
+
+                const customIcon = L.divIcon({ className: className, html: label, iconSize: [32, 32], iconAnchor: [16, 16] });
+
+                // Tworzymy interaktywny Popup (dymek) po kliknięciu w punkt na mapie
+                const popupHtml = `
+                    <div style="font-size: 13px;">
+                        <b>Kolejność: ${point.isBase ? 'Baza' : (point.optLabel !== undefined ? point.optLabel : 'Brak')}</b><br>
+                        ${point.name}<br>
+                        ${point.status === 'pending' ? `
+                        <div style="margin-top: 10px;">
+                            <button class="btn-danger" style="padding: 5px; margin-bottom: 5px;" onclick="updatePointStatus(${point.id}, 'completed')">✔️ Zaliczony</button>
+                            <button class="btn-warning" style="padding: 5px; margin-bottom: 0;" onclick="updatePointStatus(${point.id}, 'postponed')">🕒 Później</button>
+                        </div>
+                        ` : `
+                        <div style="margin-top: 10px; color: ${point.status === 'completed' ? 'red' : '#d39e00'}; font-weight: bold;">
+                            Status: ${point.status === 'completed' ? 'Zaliczony' : 'Zostawiony na później'}
+                        </div>
+                        <button style="padding: 5px; margin-top: 5px; background: #6c757d; color: white;" onclick="updatePointStatus(${point.id}, 'pending')">Cofnij zmianę</button>
+                        `}
+                    </div>
+                `;
+
+                L.marker([point.lat, point.lon], { icon: customIcon }).addTo(markersLayer).bindPopup(popupHtml);
+            });
+        }
+
+        // NOWOŚĆ: Zmiana statusu punktu wywoływana z popupa lub powiadomienia na dole
+        window.updatePointStatus = function(id, newStatus) {
+            const pt = deliveryPoints.find(p => p.id === id);
+            if(pt) {
+                pt.status = newStatus;
+                map.closePopup(); // Zamknij otwarty dymek, jeśli był
+                
+                // Ukryj alert na dole, jeśli modyfikujemy punkt, koło którego stoimy
+                if(currentClosestId === id) {
+                    document.getElementById('proximity-alert').classList.add('hidden');
+                    currentClosestId = null;
+                }
+
+                updateListUI();
+                drawAllMarkers();
+                recalculateRouteLine(); // Przelicz niebieską trasę na nowo
             }
         }
 
+        // Pierwsza optymalizacja całej trasy z nadaniem numerów
         async function optimizeRoute() {
-            if (deliveryPoints.length < 2) { alert("Musisz dodać co najmniej 2 punkty!"); return; }
-            const coordinatesString = deliveryPoints.map(p => `${p.lon},${p.lat}`).join(';');
+            const routePoints = deliveryPoints.filter(p => p.status === 'pending');
+            if (routePoints.length < 2) { alert("Musisz dodać co najmniej 2 punkty!"); return; }
+            
+            const coordinatesString = routePoints.map(p => `${p.lon},${p.lat}`).join(';');
+            const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordinatesString}?source=first&roundtrip=true&overview=full&geometries=geojson`;
+            
+            try {
+                const response = await fetch(osrmUrl);
+                const data = await response.json();
+                if (data.code === 'Ok') {
+                    if (routeLayer) map.removeLayer(routeLayer);
+                    routeLayer = L.geoJSON(data.trips[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
+                    
+                    // Nadajemy niezmienne numery (optLabel)
+                    routePoints.forEach((point, index) => {
+                        const optIndex = data.waypoints[index].waypoint_index;
+                        point.optLabel = optIndex === 0 ? 'B' : optIndex;
+                        point.isBase = (optIndex === 0);
+                    });
+
+                    updateListUI();
+                    drawAllMarkers();
+
+                    if (!trackingId) map.fitBounds(routeLayer.getBounds());
+                    if (window.innerWidth < 768) togglePanel();
+                } else { alert("Nie udało się wyznaczyć trasy."); }
+            } catch (error) {}
+        }
+
+        // NOWOŚĆ: Przeliczanie samej niebieskiej linii z pominięciem punktów zaliczonych
+        async function recalculateRouteLine() {
+            const routePoints = deliveryPoints.filter(p => p.status === 'pending');
+            if (routePoints.length < 2) {
+                if (routeLayer) map.removeLayer(routeLayer);
+                return;
+            }
+            const coordinatesString = routePoints.map(p => `${p.lon},${p.lat}`).join(';');
             const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordinatesString}?source=first&roundtrip=true&overview=full&geometries=geojson`;
             try {
                 const response = await fetch(osrmUrl);
@@ -240,26 +306,15 @@
                 if (data.code === 'Ok') {
                     if (routeLayer) map.removeLayer(routeLayer);
                     routeLayer = L.geoJSON(data.trips[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
-                    markersLayer.clearLayers();
-                    deliveryPoints.forEach((point, index) => {
-                        const optIndex = data.waypoints[index].waypoint_index;
-                        const isBase = optIndex === 0;
-                        const label = isBase ? 'B' : optIndex;
-                        const customIcon = L.divIcon({
-                            className: isBase ? 'custom-marker baza' : 'custom-marker', html: label, iconSize: [32, 32], iconAnchor: [16, 16]
-                        });
-                        L.marker([point.lat, point.lon], { icon: customIcon }).addTo(markersLayer).bindPopup(`<b>Kolejność: ${isBase ? 'Baza' : optIndex}</b><br>${point.name}`);
-                    });
-                    if (!trackingId) map.fitBounds(routeLayer.getBounds());
-                    if (window.innerWidth < 768) togglePanel();
-                } else { alert("Nie udało się wyznaczyć trasy."); }
-            } catch (error) { console.error("Błąd routingu:", error); }
+                }
+            } catch (error) {}
         }
 
         function clearAll() {
-            if (confirm("Usunąć trasę z mapy? (Stałe adresy pozostaną zapisane)")) {
+            if (confirm("Usunąć trasę z mapy?")) {
                 deliveryPoints = []; updateListUI(); markersLayer.clearLayers();
                 if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+                document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null;
             }
         }
 
@@ -278,6 +333,44 @@
                         if (!courierMarker) { courierMarker = L.circleMarker([lat, lon], { color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8 }).addTo(map); } 
                         else { courierMarker.setLatLng([lat, lon]); }
                         map.panTo([lat, lon]);
+
+                        // NOWOŚĆ: Logika wykrywania bliskości punktu (Alert Zbliżeniowy)
+                        let closestPoint = null;
+                        let minDistance = 1000; // Granica to 1000 metrów (1km)
+
+                        deliveryPoints.forEach(pt => {
+                            if (pt.status === 'pending') {
+                                const dist = map.distance([lat, lon], [pt.lat, pt.lon]);
+                                if (dist < minDistance) {
+                                    minDistance = dist;
+                                    closestPoint = pt;
+                                }
+                            }
+                        });
+
+                        const alertDiv = document.getElementById('proximity-alert');
+                        if (closestPoint) {
+                            if (currentClosestId !== closestPoint.id) {
+                                alertDiv.innerHTML = `
+                                    <div style="font-size: 14px; margin-bottom: 8px;">
+                                        <b>Jesteś blisko celu:</b><br>
+                                        <span id="prox-dist">${Math.round(minDistance)}</span>m - ${closestPoint.name}
+                                    </div>
+                                    <button class="btn-danger" style="margin-bottom: 5px; padding: 8px;" onclick="updatePointStatus(${closestPoint.id}, 'completed')">✔️ Punkt Zaliczony</button>
+                                    <button class="btn-warning" style="margin-bottom: 0; padding: 8px;" onclick="updatePointStatus(${closestPoint.id}, 'postponed')">🕒 Przyjadę później</button>
+                                `;
+                                alertDiv.classList.remove('hidden');
+                                currentClosestId = closestPoint.id;
+                            } else {
+                                // Aktualizuje tylko metry, żeby nie przerywać klikania przycisku
+                                const distSpan = document.getElementById('prox-dist');
+                                if (distSpan) distSpan.innerText = Math.round(minDistance);
+                            }
+                        } else {
+                            alertDiv.classList.add('hidden');
+                            currentClosestId = null;
+                        }
+
                     },
                     (error) => {
                         alert("Brak dostępu do lokalizacji."); navigator.geolocation.clearWatch(trackingId); trackingId = null;
@@ -287,7 +380,6 @@
             }
         }
 
-        // Uruchomienie ładowania stałych adresów przy starcie aplikacji
         renderSavedAddresses();
     </script>
 </body>
