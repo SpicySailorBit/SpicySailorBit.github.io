@@ -25,13 +25,8 @@
         
         #ui-panel:not(.collapsed) #ui-header { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
         
-        #ui-content { 
-            padding: 15px; 
-            overflow-y: auto; 
-            max-height: calc(90vh - 50px); 
-        }
+        #ui-content { padding: 15px; overflow-y: auto; max-height: calc(90vh - 50px); }
         .scroll-buffer { height: 40px; } 
-
         .hidden { display: none !important; }
         
         input[type="text"], select { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;}
@@ -145,15 +140,12 @@
             </details>
             
             <button class="btn-success" style="margin-top: 10px;" onclick="optimizeRoute()">🛣️ Wyznacz trasę</button>
-            
             <div id="route-stats" class="hidden"></div>
-            
             <hr>
             <button id="track-btn" class="btn-success" style="background-color: #28a745;" onclick="toggleDriveMode()">🚀 Wyruszam!</button>
             
             <h4 style="margin-bottom: 5px; margin-top: 10px;">Lista punktów:</h4>
             <ul id="points-list"></ul>
-            
             <button class="btn-danger" style="margin-top: 10px; background-color: #6c757d;" onclick="clearAll()">🗑️ Wyczyść mapę</button>
             <div class="scroll-buffer"></div>
         </div>
@@ -164,15 +156,12 @@
             <h3 id="modal-title">Edycja elementu</h3>
             <label for="modal-input-name">Nazwa (maks. 50 znaków):</label>
             <input type="text" id="modal-input-name" placeholder="Wpisz nazwę...">
-            
             <div id="modal-desc-container">
                 <label for="modal-input-desc">Opis / Notatka (maks. 50 znaków):</label>
                 <input type="text" id="modal-input-desc" placeholder="np. Kod do bramy 123...">
-                
                 <label for="modal-input-group" style="margin-top: 10px;">Przypisz do grupy:</label>
                 <select id="modal-input-group"></select>
             </div>
-            
             <div class="modal-buttons">
                 <button class="btn-secondary" onclick="closeEditModal()">Anuluj</button>
                 <button class="btn-success" onclick="saveModalChanges()">Zapisz</button>
@@ -184,7 +173,6 @@
         <div id="action-modal" class="modal-box">
             <h3>Jesteś na miejscu!</h3>
             <div id="action-modal-address">ul. Testowa 1, Miasto</div>
-            
             <button class="btn-danger" onclick="confirmPointAction('completed')">✔️ Punkt Zaliczony</button>
             <button class="btn-warning" onclick="confirmPointAction('postponed')">🕒 Przyjadę później</button>
             <button class="btn-secondary" style="margin-top: 5px;" onclick="closeActionModal()">✖ Zamknij okno</button>
@@ -458,11 +446,11 @@
             if(pt) {
                 pt.status = newStatus; map.closePopup();
                 if(currentClosestId === id) { document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null; }
-                updateListUI(); drawAllMarkers(); recalculateRouteLine(); 
+                updateListUI(); drawAllMarkers(); recalculateRouteLine(false); // Aktualizacja tylko samej linii 
             }
         }
 
-        // ZMIANA: Zmuszenie algorytmu komiwojażera do startowania z pozycji GPS
+        // ZMIANA: Twarda optymalizacja i wymuszenie renderowania linii
         async function optimizeRoute() {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending'); 
             if (routePoints.length < 1) { alert("Musisz dodać co najmniej 1 punkt!"); return; }
@@ -472,52 +460,61 @@
                 return;
             }
             
-            // JEDEN ADRES: Po prostu wyznacz linię od GPS do celu
             if (routePoints.length === 1) {
                 routePoints[0].optLabel = 1;
                 updateListUI(); drawAllMarkers();
-                recalculateRouteLine();
+                recalculateRouteLine(true); // Opcjonalnie przybliża mapę
                 if (window.innerWidth < 768) togglePanel();
                 return;
             }
 
-            // DWA LUB WIĘCEJ: Optymalizacja z twardym punktem początkowym GPS
+            // Ustawiamy sztywne ramy dla algorytmu (Zawsze startujemy od GPS, kończymy gdziekolwiek jest sensownie)
             let coordsArray = [];
-            // GPS ZAWSZE NA PIERWSZYM MIEJSCU (index 0)
-            coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); 
-            // Dodanie pozostałych punktów trasy
-            routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));
+            coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); // 0: GPS
+            routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));     // 1-N: Paczki
 
-            // ZMIANA PARAMETRÓW: source=first wymusza start z punktu GPS. roundtrip=false kończy trasę na ostatniej paczce.
-            const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordsArray.join(';')}?source=first&roundtrip=false&overview=full&geometries=geojson`;
+            // Zapytanie wysłane BEZ zapytań o geometrię w formacie trip
+            const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordsArray.join(';')}?source=first&roundtrip=false&overview=false`;
 
             try {
                 const response = await fetch(osrmUrl);
                 const data = await response.json();
+                
                 if (data.code === 'Ok') {
-                    if (routeLayer) map.removeLayer(routeLayer);
-                    routeLayer = L.geoJSON(data.trips[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
-                    
-                    // Serwer zwraca nową kolejność. Pamiętajmy, że na indeksie 0 jest nasz GPS.
+                    // Aktualizujemy numery na punktach na podstawie danych serwera
                     routePoints.forEach((point, index) => { 
-                        // Indeks 0 to GPS, więc deliveryPoints zaczynają się od indeksu 1 w odpowiedzi serwera
+                        // Waypoints[index + 1] dlatego, że index 0 to współrzędne GPS
                         const optIndex = data.waypoints[index + 1].waypoint_index; 
                         point.optLabel = optIndex; 
                     });
                     
-                    updateListUI(); drawAllMarkers(); updateRouteStats(data.trips[0].distance, data.trips[0].duration);
-                    if (!isFollowingGPS) map.fitBounds(routeLayer.getBounds()); 
+                    updateListUI(); drawAllMarkers();
+                    
+                    // Wyrzucamy rysowanie ołówkiem do drugiej funkcji (route API zamiast trip API)
+                    recalculateRouteLine(true);
+                    
                     if (window.innerWidth < 768) togglePanel();
-                } else { alert("Nie udało się wyznaczyć trasy."); }
+                } else { alert("Nie udało się wyznaczyć optymalnej trasy."); }
             } catch (error) { console.error(error); }
         }
 
-        async function recalculateRouteLine() {
+        // ZMIANA: Funkcja wyznaczająca prostą linię pomiędzy posortowanymi numerycznie punktami
+        async function recalculateRouteLine(fitBounds = false) {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending');
+            
+            // Sortujemy punkty wg ułożonej kolejności (1, 2, 3...)
             routePoints.sort((a, b) => { return (a.optLabel !== undefined ? a.optLabel : 999) - (b.optLabel !== undefined ? b.optLabel : 999); });
-            let coordsArray = []; if (lastKnownPosition) coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`);
-            routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));
-            if (coordsArray.length < 2) { if (routeLayer) map.removeLayer(routeLayer); document.getElementById('route-stats').classList.add('hidden'); return; }
+            
+            let coordsArray = []; 
+            if (lastKnownPosition) coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); // Pierwszy do rysowania to GPS
+            routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`)); // Następnie po kolei paczki
+
+            if (coordsArray.length < 2) { 
+                if (routeLayer) map.removeLayer(routeLayer); 
+                document.getElementById('route-stats').classList.add('hidden'); 
+                return; 
+            }
+
             try {
                 const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordsArray.join(';')}?overview=full&geometries=geojson`);
                 const data = await response.json();
@@ -525,6 +522,11 @@
                     if (routeLayer) map.removeLayer(routeLayer);
                     routeLayer = L.geoJSON(data.routes[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
                     updateRouteStats(data.routes[0].distance, data.routes[0].duration);
+                    
+                    // Dopasowujemy widok do całej, wyznaczonej linii (jeśli flaga to nakazuje i nie jedziemy zablokowani)
+                    if (fitBounds && !isFollowingGPS) {
+                        map.fitBounds(routeLayer.getBounds());
+                    }
                 }
             } catch (error) {}
         }
