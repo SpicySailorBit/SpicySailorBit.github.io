@@ -67,21 +67,20 @@
             100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 193, 7, 0); }
         }
         
-        /* ZMIENIONE: Dodano transition i klasę .lifted dla powiadomienia */
         #proximity-alert {
             position: absolute; bottom: 20px; right: 20px; z-index: 1000;
             background: #ffc107; color: #212529; padding: 10px 14px; border-radius: 20px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid white;
             font-weight: bold; font-size: 13px; cursor: pointer; text-align: center;
             animation: pulseAlert 2s infinite; white-space: nowrap;
-            transition: bottom 0.3s ease-in-out; /* Płynne podnoszenie/opuszczanie */
+            transition: bottom 0.3s ease-in-out; 
             max-width: 50vw; overflow: hidden; text-overflow: ellipsis;
         }
         #proximity-alert:hover { background: #e0a800; }
         
-        /* Klasa dodawana, gdy przycisk wyśrodkuj jest widoczny */
+        /* ZMIANA: Dodany !important by wymusić pozycję ponad przyciskiem */
         #proximity-alert.lifted {
-            bottom: 90px;
+            bottom: 100px !important; 
         }
 
         #center-btn {
@@ -161,7 +160,6 @@
         </div>
     </div>
 
-    <!-- Modal Edycji Danych -->
     <div id="edit-modal-overlay" class="modal-overlay hidden">
         <div id="edit-modal" class="modal-box">
             <h3 id="modal-title">Edycja elementu</h3>
@@ -183,7 +181,6 @@
         </div>
     </div>
 
-    <!-- Modal Akcji (Zalicz/Później) -->
     <div id="action-modal-overlay" class="modal-overlay hidden">
         <div id="action-modal" class="modal-box">
             <h3>Jesteś na miejscu!</h3>
@@ -196,7 +193,6 @@
     </div>
 
     <div id="proximity-alert" class="hidden"></div>
-    
     <button id="center-btn" class="hidden" onclick="recenterMap()">🎯 Wyśrodkuj</button>
 
     <div id="map"></div>
@@ -249,6 +245,19 @@
         } catch (e) {
             console.error("Błąd pamięci lokalnej", e);
             savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }];
+        }
+
+        // NOWOŚĆ: Solidna funkcja pilnująca wysokości powiadomienia
+        function updateAlertLift() {
+            const alertDiv = document.getElementById('proximity-alert');
+            const centerBtn = document.getElementById('center-btn');
+            
+            // Jeśli przycisk Wyśrodkuj NIE JEST ukryty, podnieś powiadomienie
+            if (!centerBtn.classList.contains('hidden')) {
+                alertDiv.classList.add('lifted');
+            } else {
+                alertDiv.classList.remove('lifted');
+            }
         }
 
         function togglePanel() {
@@ -516,20 +525,19 @@
             }
         }
 
-        // ZMIENIONE: Dodano dodawanie klasy .lifted
+        // ZMIANA: Dodano aktualizację wysokości powiadomienia po podniesieniu Wyśrodkuj
         map.on('dragstart', () => { 
             if (isFollowingGPS) { 
                 isFollowingGPS = false; 
                 document.getElementById('center-btn').classList.remove('hidden'); 
-                document.getElementById('proximity-alert').classList.add('lifted'); // Podniesienie powiadomienia
+                updateAlertLift(); // Sprawdza status i odpowiednio podnosi
             } 
         });
         
-        // ZMIENIONE: Usunięcie klasy .lifted
         function recenterMap() { 
             isFollowingGPS = true; 
             document.getElementById('center-btn').classList.add('hidden'); 
-            document.getElementById('proximity-alert').classList.remove('lifted'); // Opuszczenie powiadomienia
+            updateAlertLift(); // Opuszcza powiadomienie
             if (lastKnownPosition) { map.panTo(lastKnownPosition); } 
         }
 
@@ -539,12 +547,14 @@
                 isFollowingGPS = false;
                 btn.innerText = "🚀 Wyruszam!"; btn.className = "btn-success"; btn.style.backgroundColor = "#28a745";
                 document.getElementById('center-btn').classList.add('hidden'); 
-                document.getElementById('proximity-alert').classList.remove('lifted'); // Opuść, bo nie ma przycisku wyśrodkuj
+                updateAlertLift(); 
             } else {
                 isFollowingGPS = true;
                 btn.innerText = "⏹ Zatrzymaj podążanie"; btn.className = "btn-danger"; btn.style.backgroundColor = "#dc3545";
+                document.getElementById('center-btn').classList.add('hidden'); // Gdy jedziemy, nie ma wyśrodkuj
+                updateAlertLift();
+
                 if (lastKnownPosition) map.setView(lastKnownPosition, 16);
-                
                 const content = document.getElementById('ui-content');
                 if (!content.classList.contains('hidden')) { togglePanel(); }
             }
@@ -580,6 +590,9 @@
                             alertDiv.onclick = function() { openActionModal(closestPoint.id); };
                             alertDiv.classList.remove('hidden'); 
                             currentClosestId = closestPoint.id;
+                            
+                            // Wymuszenie sprawdzenia pozycji powiadomienia w momencie jego stworzenia
+                            updateAlertLift(); 
                         } else { 
                             const distSpan = document.getElementById('prox-dist'); if (distSpan) distSpan.innerText = Math.round(minDistance); 
                         }
