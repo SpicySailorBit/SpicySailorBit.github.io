@@ -62,7 +62,6 @@
             width: 250px; max-width: 80vw;
         }
 
-        /* NOWOŚĆ: Wygląd przycisku Wyśrodkuj na środku u dołu */
         #center-btn {
             position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000;
             background-color: #007bff; color: white; padding: 12px 24px; border: none; border-radius: 25px;
@@ -70,6 +69,12 @@
             width: auto; margin-bottom: 0; display: inline-block;
         }
         #center-btn:hover { background-color: #0056b3; }
+        
+        /* Panel statystyk trasy */
+        #route-stats {
+            background: #e9ecef; padding: 10px; border-radius: 4px; margin-bottom: 10px;
+            font-weight: bold; font-size: 14px; text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -95,6 +100,9 @@
             </details>
             
             <button class="btn-success" onclick="optimizeRoute()">🛣️ Wyznacz trasę</button>
+            
+            <div id="route-stats" class="hidden"></div>
+            
             <hr>
             <button id="track-btn" class="btn-warning" onclick="toggleTracking()">📍 Rozpocznij śledzenie GPS</button>
             
@@ -106,7 +114,6 @@
     </div>
 
     <div id="proximity-alert" class="hidden"></div>
-    
     <button id="center-btn" class="hidden" onclick="recenterMap()">🎯 Wyśrodkuj</button>
 
     <div id="map"></div>
@@ -125,7 +132,6 @@
         let courierMarker = null;
         let currentClosestId = null; 
         
-        // NOWE ZMIENNE: Zarządzanie stanem kamery
         let isFollowingGPS = false;
         let lastKnownPosition = null;
 
@@ -179,6 +185,21 @@
                 li.innerText = `${prefix}${shortName}`;
                 listElement.appendChild(li);
             });
+        }
+
+        // NOWOŚĆ: Funkcja formatująca kilometry i czas
+        function updateRouteStats(distance, duration) {
+            const statsDiv = document.getElementById('route-stats');
+            const km = (distance / 1000).toFixed(1);
+            const hrs = Math.floor(duration / 3600);
+            const mins = Math.floor((duration % 3600) / 60);
+            
+            let timeStr = '';
+            if (hrs > 0) timeStr += `${hrs}g `;
+            timeStr += `${mins}m`;
+            
+            statsDiv.innerHTML = `🛣️ Zostało: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
+            statsDiv.classList.remove('hidden');
         }
 
         function renderSavedAddresses() {
@@ -280,6 +301,9 @@
                     });
 
                     updateListUI(); drawAllMarkers();
+                    
+                    // Zaktualizuj licznik dla pierwszej wyznaczonej trasy
+                    updateRouteStats(data.trips[0].distance, data.trips[0].duration);
 
                     if (!trackingId) map.fitBounds(routeLayer.getBounds());
                     if (window.innerWidth < 768) togglePanel();
@@ -287,17 +311,48 @@
             } catch (error) {}
         }
 
+        // NOWOŚĆ: Logika rysowania trasy z uwzględnieniem lokalizacji GPS i zachowaniem numeracji
         async function recalculateRouteLine() {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending');
-            if (routePoints.length < 2) { if (routeLayer) map.removeLayer(routeLayer); return; }
-            const coordinatesString = routePoints.map(p => `${p.lon},${p.lat}`).join(';');
-            const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordinatesString}?source=first&roundtrip=true&overview=full&geometries=geojson`;
+            
+            // Sortujemy punkty, aby zachować wcześniej wyznaczoną kolejność (1, 2, 3...), a Bazę dajemy na sam koniec
+            routePoints.sort((a, b) => {
+                if (a.isBase) return 1;
+                if (b.isBase) return -1;
+                const valA = a.optLabel !== undefined ? a.optLabel : 999;
+                const valB = b.optLabel !== undefined ? b.optLabel : 999;
+                return valA - valB;
+            });
+
+            let coordsArray = [];
+            
+            // 1. START OD GPS: Jeśli mamy GPS, dodajemy Twoją czerwoną kropkę jako start trasy
+            if (trackingId && lastKnownPosition) {
+                coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`);
+            }
+            
+            // 2. Dodajemy resztę punktów z optymalnej trasy
+            routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));
+
+            if (coordsArray.length < 2) {
+                if (routeLayer) map.removeLayer(routeLayer);
+                document.getElementById('route-stats').classList.add('hidden');
+                return;
+            }
+
+            // Używamy API '/route/' (zwykła ścieżka od A do B do C), a nie API komiwojażera
+            const coordinatesString = coordsArray.join(';');
+            const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${coordinatesString}?overview=full&geometries=geojson`;
+            
             try {
                 const response = await fetch(osrmUrl);
                 const data = await response.json();
                 if (data.code === 'Ok') {
                     if (routeLayer) map.removeLayer(routeLayer);
-                    routeLayer = L.geoJSON(data.trips[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
+                    routeLayer = L.geoJSON(data.routes[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
+                    
+                    // Zaktualizuj licznik kilometrów, który teraz naturalnie "odlicza" w dół!
+                    updateRouteStats(data.routes[0].distance, data.routes[0].duration);
                 }
             } catch (error) {}
         }
@@ -307,25 +362,21 @@
                 deliveryPoints = []; updateListUI(); markersLayer.clearLayers();
                 if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
                 document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null;
+                document.getElementById('route-stats').classList.add('hidden');
             }
         }
 
-        // NOWOŚĆ: Reakcja na przesuwanie mapy palcem
         map.on('dragstart', () => {
-            // Jeśli obecnie śledzimy GPS i użytkownik dotknie/przesunie mapę
             if (trackingId && isFollowingGPS) {
-                isFollowingGPS = false; // Przestań podążać kamerą za kropką
-                document.getElementById('center-btn').classList.remove('hidden'); // Pokaż przycisk "Wyśrodkuj"
+                isFollowingGPS = false; 
+                document.getElementById('center-btn').classList.remove('hidden'); 
             }
         });
 
-        // NOWOŚĆ: Funkcja do ręcznego wyśrodkowania po zakończeniu oglądania mapy
         function recenterMap() {
-            isFollowingGPS = true; // Wznów podążanie
-            document.getElementById('center-btn').classList.add('hidden'); // Ukryj przycisk
-            if (lastKnownPosition) {
-                map.panTo(lastKnownPosition); // Natychmiast przesuń kamerę z powrotem do kropki
-            }
+            isFollowingGPS = true; 
+            document.getElementById('center-btn').classList.add('hidden'); 
+            if (lastKnownPosition) { map.panTo(lastKnownPosition); }
         }
 
         function toggleTracking() {
@@ -335,25 +386,27 @@
 
             if (trackingId) {
                 navigator.geolocation.clearWatch(trackingId); trackingId = null;
-                isFollowingGPS = false; // Reset śledzenia kamery
-                centerBtn.classList.add('hidden'); // Ukryj przycisk wyśrodkuj, jeśli wyłączamy GPS
+                isFollowingGPS = false; centerBtn.classList.add('hidden'); 
                 if (courierMarker) { map.removeLayer(courierMarker); courierMarker = null; }
                 btn.innerText = "📍 Rozpocznij śledzenie GPS"; btn.className = "btn-warning";
             } else {
                 btn.innerText = "⏹ Zakończ śledzenie"; btn.className = "btn-danger";
-                isFollowingGPS = true; // Zaczynamy śledzenie = kamera podąża za kropką
+                isFollowingGPS = true; 
 
                 trackingId = navigator.geolocation.watchPosition(
                     (position) => {
                         const lat = position.coords.latitude; const lon = position.coords.longitude;
-                        lastKnownPosition = [lat, lon]; // Zapisz aktualną pozycję
+                        const firstFix = !lastKnownPosition;
+                        lastKnownPosition = [lat, lon]; 
 
                         if (!courierMarker) { courierMarker = L.circleMarker([lat, lon], { color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8 }).addTo(map); } 
                         else { courierMarker.setLatLng([lat, lon]); }
                         
-                        // Przesuwaj kamerę TYLKO jeśli flaga isFollowingGPS jest włączona
-                        if (isFollowingGPS) {
-                            map.panTo([lat, lon]);
+                        if (isFollowingGPS) { map.panTo([lat, lon]); }
+
+                        // Po pierwszym złapaniu sygnału GPS, przypnij linię nawigacyjną do kropki
+                        if (firstFix && deliveryPoints.filter(p => p.status === 'pending').length >= 1) {
+                            recalculateRouteLine();
                         }
 
                         let closestPoint = null;
