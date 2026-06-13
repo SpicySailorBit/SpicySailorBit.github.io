@@ -61,12 +61,21 @@
         .saved-item { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-bottom: 6px; background: white; padding: 6px; border-radius: 4px; border: 1px solid #eee;}
         .saved-item span.name { flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+        /* ZMIENIONE: Wygląd małego powiadomienia o bliskości punktu */
+        @keyframes pulseAlert {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7); }
+            70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(255, 193, 7, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 193, 7, 0); }
+        }
+        
         #proximity-alert {
             position: absolute; bottom: 20px; right: 20px; z-index: 1000;
-            background: white; padding: 15px; border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid #007bff;
-            width: 250px; max-width: 80vw;
+            background: #ffc107; color: #212529; padding: 12px 18px; border-radius: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid white;
+            font-weight: bold; font-size: 14px; cursor: pointer; text-align: center;
+            animation: pulseAlert 2s infinite; white-space: nowrap;
         }
+        #proximity-alert:hover { background: #e0a800; }
 
         #center-btn {
             position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000;
@@ -81,19 +90,28 @@
             font-weight: bold; font-size: 14px; text-align: center;
         }
 
-        #modal-overlay {
+        /* Wspólne style dla obu okien modalnych */
+        .modal-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0, 0, 0, 0.5); z-index: 2000; 
             display: flex; justify-content: center; align-items: center;
         }
-        #edit-modal {
+        .modal-box {
             background: white; padding: 20px; border-radius: 8px;
             box-shadow: 0 10px 25px rgba(0,0,0,0.5); width: 340px; max-width: 90vw;
         }
+        
+        /* Modal edycji adresu */
         #edit-modal h3 { margin-top: 0; margin-bottom: 15px; color: #343a40; }
         #edit-modal label { font-size: 13px; font-weight: bold; color: #495057; display: block; margin-bottom: 5px; }
         .modal-buttons { display: flex; gap: 10px; margin-top: 15px; }
         .modal-buttons button { margin-bottom: 0; }
+
+        /* NOWOŚĆ: Modal Akcji Punktu (Zalicz / Później) */
+        #action-modal { text-align: center; }
+        #action-modal h3 { margin-top: 0; color: #343a40; margin-bottom: 5px; }
+        #action-modal-address { font-size: 16px; font-weight: bold; color: #007bff; margin-bottom: 20px; word-wrap: break-word; }
+        #action-modal button { font-size: 16px; padding: 15px; }
     </style>
 </head>
 <body>
@@ -139,8 +157,8 @@
         </div>
     </div>
 
-    <div id="modal-overlay" class="hidden">
-        <div id="edit-modal">
+    <div id="edit-modal-overlay" class="modal-overlay hidden">
+        <div id="edit-modal" class="modal-box">
             <h3 id="modal-title">Edycja elementu</h3>
             <label for="modal-input-name">Nazwa (maks. 50 znaków):</label>
             <input type="text" id="modal-input-name" placeholder="Wpisz nazwę...">
@@ -154,13 +172,25 @@
             </div>
             
             <div class="modal-buttons">
-                <button class="btn-secondary" onclick="closeModal()">Anuluj</button>
+                <button class="btn-secondary" onclick="closeEditModal()">Anuluj</button>
                 <button class="btn-success" onclick="saveModalChanges()">Zapisz</button>
             </div>
         </div>
     </div>
 
+    <div id="action-modal-overlay" class="modal-overlay hidden">
+        <div id="action-modal" class="modal-box">
+            <h3>Jesteś na miejscu!</h3>
+            <div id="action-modal-address">ul. Testowa 1, Miasto</div>
+            
+            <button class="btn-danger" onclick="confirmPointAction('completed')">✔️ Punkt Zaliczony</button>
+            <button class="btn-warning" onclick="confirmPointAction('postponed')">🕒 Przyjadę później</button>
+            <button class="btn-secondary" style="margin-top: 5px;" onclick="closeActionModal()">✖ Zamknij okno</button>
+        </div>
+    </div>
+
     <div id="proximity-alert" class="hidden"></div>
+    
     <button id="center-btn" class="hidden" onclick="recenterMap()">🎯 Wyśrodkuj</button>
 
     <div id="map"></div>
@@ -178,36 +208,43 @@
         let trackingId = null;
         let courierMarker = null;
         let currentClosestId = null; 
-        
-        // NOWOŚĆ: isFollowingGPS decyduje tylko czy kamera jedzie za kropką. GPS pobierany jest zawsze.
         let isFollowingGPS = false; 
         let lastKnownPosition = null;
-        let isFirstGPSFix = true; // Pomaga wyśrodkować kamerę tylko RAZ przy wejściu na stronę
+        let isFirstGPSFix = true; 
 
         let currentEditingType = null; 
         let currentEditingGroupId = null;
         let currentEditingAddressId = null;
 
+        // NOWOŚĆ: Pamięć dla modala akcji
+        let currentActionPointId = null;
+
         let savedGroups = [];
-        const rawGroups = localStorage.getItem('courierSavedGroups');
-        
-        if (rawGroups) {
-            savedGroups = JSON.parse(rawGroups);
-        } else {
-            const oldFlatData = localStorage.getItem('courierSavedAddresses');
-            if (oldFlatData) {
-                const oldAddresses = JSON.parse(oldFlatData);
-                savedGroups = [{
-                    id: 'group_default', name: 'Ogólne',
-                    addresses: oldAddresses.map((a, idx) => ({
-                        id: 'addr_' + Date.now() + '_' + idx,
-                        lat: a.lat, lon: a.lon, 
-                        name: a.name ? a.name.split(',')[0] : 'Nieznany adres', 
-                        description: ''
-                    }))
-                }];
-            } else { savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }]; }
-            localStorage.setItem('courierSavedGroups', JSON.stringify(savedGroups));
+        try {
+            const rawGroups = localStorage.getItem('courierSavedGroups');
+            if (rawGroups) {
+                savedGroups = JSON.parse(rawGroups);
+            } else {
+                const oldFlatData = localStorage.getItem('courierSavedAddresses');
+                if (oldFlatData) {
+                    const oldAddresses = JSON.parse(oldFlatData);
+                    savedGroups = [{
+                        id: 'group_default', name: 'Ogólne',
+                        addresses: oldAddresses.map((a, idx) => ({
+                            id: 'addr_' + Date.now() + '_' + idx,
+                            lat: a.lat, lon: a.lon, 
+                            name: a.name ? a.name.split(',')[0] : 'Nieznany adres', 
+                            description: ''
+                        }))
+                    }];
+                } else {
+                    savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }];
+                }
+                localStorage.setItem('courierSavedGroups', JSON.stringify(savedGroups));
+            }
+        } catch (e) {
+            console.error("Błąd pamięci lokalnej", e);
+            savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }];
         }
 
         function togglePanel() {
@@ -328,7 +365,7 @@
             document.getElementById('modal-title').innerText = "Edycja grupy";
             document.getElementById('modal-input-name').value = group.name;
             document.getElementById('modal-desc-container').classList.add('hidden'); 
-            document.getElementById('modal-overlay').classList.remove('hidden');
+            document.getElementById('edit-modal-overlay').classList.remove('hidden');
         }
 
         function openAddressEditModal(groupId, addrId) {
@@ -341,10 +378,10 @@
             const modalSelect = document.getElementById('modal-input-group'); modalSelect.innerHTML = '';
             savedGroups.forEach(g => { const opt = document.createElement('option'); opt.value = g.id; opt.innerText = g.name; if (g.id === groupId) opt.selected = true; modalSelect.appendChild(opt); });
             document.getElementById('modal-desc-container').classList.remove('hidden'); 
-            document.getElementById('modal-overlay').classList.remove('hidden');
+            document.getElementById('edit-modal-overlay').classList.remove('hidden');
         }
 
-        function closeModal() { document.getElementById('modal-overlay').classList.add('hidden'); currentEditingType = null; currentEditingGroupId = null; currentEditingAddressId = null; }
+        function closeEditModal() { document.getElementById('edit-modal-overlay').classList.add('hidden'); currentEditingType = null; currentEditingGroupId = null; currentEditingAddressId = null; }
 
         function saveModalChanges() {
             const nameInput = document.getElementById('modal-input-name').value.substring(0, 50).trim();
@@ -362,7 +399,7 @@
                     }
                 }
             }
-            saveGroupsToStorage(); closeModal();
+            saveGroupsToStorage(); closeEditModal();
         }
 
         function deleteGroup(groupId, event) {
@@ -430,6 +467,7 @@
             const pt = deliveryPoints.find(p => p.id === id);
             if(pt) {
                 pt.status = newStatus; map.closePopup();
+                // Jeśli kliknęliśmy z dymka, trzeba też ewentualnie schować dolne powiadomienie
                 if(currentClosestId === id) { document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null; }
                 updateListUI(); drawAllMarkers(); recalculateRouteLine(); 
             }
@@ -478,82 +516,78 @@
         map.on('dragstart', () => { if (isFollowingGPS) { isFollowingGPS = false; document.getElementById('center-btn').classList.remove('hidden'); } });
         function recenterMap() { isFollowingGPS = true; document.getElementById('center-btn').classList.add('hidden'); if (lastKnownPosition) { map.panTo(lastKnownPosition); } }
 
-        // NOWOŚĆ: Przełączanie trybu jazdy (podążania) po kliknięciu „Wyruszam!”
+        // NOWOŚĆ: Zwijanie menu przy włączaniu podążania
         function toggleDriveMode() {
             const btn = document.getElementById('track-btn');
             if (isFollowingGPS) {
                 isFollowingGPS = false;
-                btn.innerText = "🚀 Wyruszam!";
-                btn.className = "btn-success";
-                btn.style.backgroundColor = "#28a745";
-                document.getElementById('center-btn').classList.add('hidden'); // Ukryj, bo nie jesteśmy w trybie jazdy
+                btn.innerText = "🚀 Wyruszam!"; btn.className = "btn-success"; btn.style.backgroundColor = "#28a745";
+                document.getElementById('center-btn').classList.add('hidden'); 
             } else {
                 isFollowingGPS = true;
-                btn.innerText = "⏹ Zatrzymaj podążanie";
-                btn.className = "btn-danger";
-                btn.style.backgroundColor = "#dc3545";
-                if (lastKnownPosition) {
-                    map.setView(lastKnownPosition, 16); // Wyrównaj i przybliż do jazdy
+                btn.innerText = "⏹ Zatrzymaj podążanie"; btn.className = "btn-danger"; btn.style.backgroundColor = "#dc3545";
+                if (lastKnownPosition) map.setView(lastKnownPosition, 16);
+                
+                // Samoczynne zwinięcie panelu, jeśli jest otwarty
+                const content = document.getElementById('ui-content');
+                if (!content.classList.contains('hidden')) {
+                    togglePanel();
                 }
             }
         }
 
-        // NOWOŚĆ: AUTOMATYCZNY GPS OD MOMENTU URUCHOMIENIA
-        function initAutomaticGPS() {
-            if (!navigator.geolocation) {
-                alert("Twoje urządzenie nie obsługuje geolokalizacji. GPS nie będzie działać.");
-                return;
+        // NOWE FUNKCJE: Obsługa centralnego okienka akcji
+        function openActionModal(pointId) {
+            const pt = deliveryPoints.find(p => p.id === pointId);
+            if (!pt) return;
+            currentActionPointId = pointId;
+            document.getElementById('action-modal-address').innerText = pt.name;
+            document.getElementById('action-modal-overlay').classList.remove('hidden');
+        }
+
+        function closeActionModal() {
+            document.getElementById('action-modal-overlay').classList.add('hidden');
+            currentActionPointId = null;
+        }
+
+        function confirmPointAction(status) {
+            if (currentActionPointId) {
+                updatePointStatus(currentActionPointId, status);
+                closeActionModal();
             }
+        }
 
-            const options = { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 };
-
-            // watchPosition działa bez przerwy w tle od startu strony
+        function initAutomaticGPS() {
+            if (!navigator.geolocation) { alert("Urządzenie nie obsługuje geolokalizacji."); return; }
             trackingId = navigator.geolocation.watchPosition(
                 (position) => {
-                    const lat = position.coords.latitude;
-                    const lon = position.coords.longitude;
-                    lastKnownPosition = [lat, lon];
+                    const lat = position.coords.latitude; const lon = position.coords.longitude; lastKnownPosition = [lat, lon];
+                    if (!courierMarker) { courierMarker = L.circleMarker([lat, lon], { color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8 }).addTo(map); } else { courierMarker.setLatLng([lat, lon]); }
+                    if (isFirstGPSFix) { map.setView([lat, lon], 16); isFirstGPSFix = false; if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) recalculateRouteLine(); }
+                    if (isFollowingGPS) { map.panTo([lat, lon]); }
 
-                    // Rysowanie/przesuwanie czerwonej kropki
-                    if (!courierMarker) {
-                        courierMarker = L.circleMarker([lat, lon], { color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8 }).addTo(map);
-                    } else {
-                        courierMarker.setLatLng([lat, lon]);
-                    }
-
-                    // NOWOŚĆ: Jeśli to pierwsze wykrycie pozycji po włączeniu strony – wyśrodkuj i zbliż (Zoom 16)
-                    if (isFirstGPSFix) {
-                        map.setView([lat, lon], 16);
-                        isFirstGPSFix = false;
-                        // Jeśli na trasie były już jakieś punkty (np. dodane przed fixem GPS), podepnij linię
-                        if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) recalculateRouteLine();
-                    }
-
-                    // Podążanie kamery działa tylko jeśli włączono tryb „Wyruszam!” (isFollowingGPS == true)
-                    if (isFollowingGPS) {
-                        map.panTo([lat, lon]);
-                    }
-
-                    // Logika alertów zbliżeniowych
                     let closestPoint = null; let minDistance = 1000; 
                     deliveryPoints.forEach(pt => { if (pt.status === 'pending') { const dist = map.distance([lat, lon], [pt.lat, pt.lon]); if (dist < minDistance) { minDistance = dist; closestPoint = pt; } } });
+                    
                     const alertDiv = document.getElementById('proximity-alert');
                     if (closestPoint) {
+                        const shortAddr = closestPoint.name.split(',')[0];
                         if (currentClosestId !== closestPoint.id) {
-                            alertDiv.innerHTML = `<div style="font-size:14px; margin-bottom:8px;"><b>Jesteś blisko celu:</b><br><span id="prox-dist">${Math.round(minDistance)}</span>m - ${closestPoint.name}</div><button class="btn-danger" style="margin-bottom:5px; padding:8px;" onclick="updatePointStatus(${closestPoint.id}, 'completed')">✔️ Punkt Zaliczony</button><button class="btn-warning" style="margin-bottom:0; padding:8px;" onclick="updatePointStatus(${closestPoint.id}, 'postponed')">🕒 Przyjadę później</button>`;
-                            alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id;
-                        } else { const distSpan = document.getElementById('prox-dist'); if (distSpan) distSpan.innerText = Math.round(minDistance); }
+                            // NOWOŚĆ: Mniejsze powiadomienie z opcją kliknięcia (otwiera modal)
+                            alertDiv.innerHTML = `📍 Cel blisko (<span id="prox-dist">${Math.round(minDistance)}</span>m)<br><small>${shortAddr}</small>`;
+                            alertDiv.onclick = function() { openActionModal(closestPoint.id); };
+                            alertDiv.classList.remove('hidden'); 
+                            currentClosestId = closestPoint.id;
+                        } else { 
+                            const distSpan = document.getElementById('prox-dist'); if (distSpan) distSpan.innerText = Math.round(minDistance); 
+                        }
                     } else { alertDiv.classList.add('hidden'); currentClosestId = null; }
                 },
-                (error) => {
-                    console.error("Błąd GPS przy starcie:", error);
-                    alert("Strona nie ma dostępu do GPS. Upewnij się, że zezwoliłeś przeglądarce na lokalizację i masz włączony GPS w telefonie.");
-                },
-                options
+                (error) => { console.error("Błąd GPS", error); },
+                { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
             );
         }
 
-        // Odpalenie bazy danych i automatycznego GPS
         renderSavedAddresses();
         initAutomaticGPS();
     </script>
