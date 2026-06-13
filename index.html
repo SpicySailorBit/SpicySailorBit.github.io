@@ -504,4 +504,18 @@
                         const alertDiv = document.getElementById('proximity-alert');
                         if (closestPoint) {
                             if (currentClosestId !== closestPoint.id) {
-                                alertDiv.innerHTML = `<div style="font-size:14px; margin-bottom:8px;"><b>Jesteś bl
+                                alertDiv.innerHTML = `<div style="font-size:14px; margin-bottom:8px;"><b>Jesteś blisko celu:</b><br><span id="prox-dist">${Math.round(minDistance)}</span>m - ${closestPoint.name}</div><button class="btn-danger" style="margin-bottom:5px; padding:8px;" onclick="updatePointStatus(${closestPoint.id}, 'completed')">✔️ Punkt Zaliczony</button><button class="btn-warning" style="margin-bottom:0; padding:8px;" onclick="updatePointStatus(${closestPoint.id}, 'postponed')">🕒 Przyjadę później</button>`;
+                                alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id;
+                            } else { const distSpan = document.getElementById('prox-dist'); if (distSpan) distSpan.innerText = Math.round(minDistance); }
+                        } else { alertDiv.classList.add('hidden'); currentClosestId = null; }
+                    },
+                    (error) => { alert("Brak GPS."); navigator.geolocation.clearWatch(trackingId); trackingId = null; isFollowingGPS = false; centerBtn.classList.add('hidden'); btn.innerText = "📍 Rozpocznij śledzenie GPS"; btn.className = "btn-warning"; },
+                    { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
+                );
+            }
+        }
+
+        renderSavedAddresses();
+    </script>
+</body>
+</html>
