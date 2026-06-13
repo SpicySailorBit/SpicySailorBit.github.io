@@ -35,6 +35,7 @@
         .btn-warning { background-color: #ffc107; color: #212529; } .btn-warning:hover { background-color: #e0a800; }
         .btn-danger { background-color: #dc3545; } .btn-danger:hover { background-color: #c82333; }
         .btn-info { background-color: #17a2b8; } .btn-info:hover { background-color: #138496; }
+        .btn-secondary { background-color: #6c757d; } .btn-secondary:hover { background-color: #5a6268; }
         
         #points-list { margin-top: 10px; padding-left: 20px; font-size: 14px; max-height: 100px; overflow-y: auto; }
         hr { border: 0; height: 1px; background: #ddd; margin: 15px 0; }
@@ -48,7 +49,6 @@
         .custom-marker.zaliczony { background-color: #dc3545; } 
         .custom-marker.pozniej { background-color: #ffc107; color: #212529; } 
 
-        /* STYLE NOWEGO SYSTEMU GRUPOWANIA */
         .group-details { background: #f1f3f5; padding: 5px; border-radius: 4px; border: 1px solid #dee2e6; margin-bottom: 8px; }
         .group-summary { font-weight: bold; cursor: pointer; outline: none; display: flex; justify-content: space-between; align-items: center; padding: 5px; font-size: 14px; }
         .group-summary-text { flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 5px; }
@@ -80,6 +80,21 @@
             background: #e9ecef; padding: 10px; border-radius: 4px; margin-bottom: 10px;
             font-weight: bold; font-size: 14px; text-align: center;
         }
+
+        /* NOWOŚĆ: Style dla profesjonalnego okna modalnego edycji */
+        #modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.5); z-index: 2000; /* Wyżej niż wszystko inne */
+            display: flex; justify-content: center; align-items: center;
+        }
+        #edit-modal {
+            background: white; padding: 20px; border-radius: 8px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5); width: 340px; max-width: 90vw;
+        }
+        #edit-modal h3 { margin-top: 0; margin-bottom: 15px; color: #343a40; }
+        #edit-modal label { font-size: 13px; font-weight: bold; color: #495057; display: block; margin-bottom: 5px; }
+        .modal-buttons { display: flex; gap: 10px; margin-top: 15px; }
+        .modal-buttons button { margin-bottom: 0; }
     </style>
 </head>
 <body>
@@ -126,6 +141,25 @@
         </div>
     </div>
 
+    <div id="modal-overlay" class="hidden">
+        <div id="edit-modal">
+            <h3 id="modal-title">Edycja elementu</h3>
+            
+            <label for="modal-input-name">Nazwa (maks. 50 znaków):</label>
+            <input type="text" id="modal-input-name" placeholder="Wpisz nazwę...">
+            
+            <div id="modal-desc-container">
+                <label for="modal-input-desc">Opis / Notatka (maks. 50 znaków):</label>
+                <input type="text" id="modal-input-desc" placeholder="np. Kod do bramy 123...">
+            </div>
+            
+            <div class="modal-buttons">
+                <button class="btn-secondary" onclick="closeModal()">Anuluj</button>
+                <button class="btn-success" onclick="saveModalChanges()">Zapisz</button>
+            </div>
+        </div>
+    </div>
+
     <div id="proximity-alert" class="hidden"></div>
     <button id="center-btn" class="hidden" onclick="recenterMap()">🎯 Wyśrodkuj</button>
 
@@ -148,41 +182,35 @@
         let isFollowingGPS = false;
         let lastKnownPosition = null;
 
-        // NOWA STRUKTURA DANYCH: Migracja lub ładowanie grup z pamięci podręcznej
+        // Zmienne pomocnicze do pamiętania co aktualnie edytujemy w oknie modalnym
+        let currentEditingType = null; // 'group' lub 'address'
+        let currentEditingGroupId = null;
+        let currentEditingAddressId = null;
+
         let savedGroups = [];
         const rawGroups = localStorage.getItem('courierSavedGroups');
         
         if (rawGroups) {
             savedGroups = JSON.parse(rawGroups);
         } else {
-            // SPRAWDZENIE I MIGRACJA: Jeśli użytkownik ma stare, płaskie dane, wrzucamy je do grupy "Ogólne"
             const oldFlatData = localStorage.getItem('courierSavedAddresses');
             if (oldFlatData) {
                 const oldAddresses = JSON.parse(oldFlatData);
                 savedGroups = [{
-                    id: 'group_default',
-                    name: 'Ogólne',
+                    id: 'group_default', name: 'Ogólne',
                     addresses: oldAddresses.map(a => ({
                         id: 'addr_' + Date.now() + Math.floor(Math.random() * 100),
                         lat: a.lat, lon: a.lon, name: a.name.split(',')[0], description: ''
                     }))
                 }];
-            } else {
-                // Jeśli aplikacja jest zupełnie nowa, tworzymy domyślną grupę startową
-                savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }];
-            }
+            } else { savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }]; }
             localStorage.setItem('courierSavedGroups', JSON.stringify(savedGroups));
         }
 
         function togglePanel() {
-            const content = document.getElementById('ui-content');
-            const icon = document.getElementById('toggle-icon');
-            const panel = document.getElementById('ui-panel');
-            if (content.classList.contains('hidden')) {
-                content.classList.remove('hidden'); panel.classList.remove('collapsed'); icon.innerText = '▼';
-            } else {
-                content.classList.add('hidden'); panel.classList.add('collapsed'); icon.innerText = '▲';
-            }
+            const content = document.getElementById('ui-content'); const icon = document.getElementById('toggle-icon'); const panel = document.getElementById('ui-panel');
+            if (content.classList.contains('hidden')) { content.classList.remove('hidden'); panel.classList.remove('collapsed'); icon.innerText = '▼'; } 
+            else { content.classList.add('hidden'); panel.classList.add('collapsed'); icon.innerText = '▲'; }
         }
 
         async function addAddress() {
@@ -190,8 +218,7 @@
             if (!address) return;
             const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
             try {
-                const response = await fetch(url);
-                const data = await response.json();
+                const response = await fetch(url); const data = await response.json();
                 if (data && data.length > 0) {
                     addPointToMapAndList(parseFloat(data[0].lat), parseFloat(data[0].lon), data[0].display_name, "");
                     document.getElementById('address-input').value = '';
@@ -199,260 +226,208 @@
             } catch (error) { alert("Wystąpił problem z połączeniem."); }
         }
 
-        // Zmiana: Funkcja przyjmuje teraz opcjonalny opis przekazywany z bazy adresów stałych
         function addPointToMapAndList(lat, lon, name, description = "") {
             const id = Date.now() + Math.floor(Math.random() * 1000);
             deliveryPoints.push({ id: id, lat: lat, lon: lon, name: name, description: description, status: 'pending' });
-            updateListUI();
-            drawAllMarkers();
-            map.setView([lat, lon], 13);
+            updateListUI(); drawAllMarkers(); map.setView([lat, lon], 13);
         }
 
         function updateListUI() {
-            const listElement = document.getElementById('points-list');
-            listElement.innerHTML = ''; 
+            const listElement = document.getElementById('points-list'); listElement.innerHTML = ''; 
             deliveryPoints.forEach((point) => {
-                const li = document.createElement('li');
-                const shortName = point.name.split(',')[0];
+                const li = document.createElement('li'); const shortName = point.name.split(',')[0];
                 let prefix = point.optLabel !== undefined ? `${point.isBase ? '[BAZA]' : point.optLabel}. ` : '- ';
                 if (point.status === 'completed') { li.style.textDecoration = 'line-through'; li.style.color = 'red'; }
                 if (point.status === 'postponed') { li.style.color = '#d39e00'; }
-                li.innerText = `${prefix}${shortName}`;
-                listElement.appendChild(li);
+                li.innerText = `${prefix}${shortName}`; listElement.appendChild(li);
             });
         }
 
         function updateRouteStats(distance, duration) {
             const statsDiv = document.getElementById('route-stats');
-            const km = (distance / 1000).toFixed(1);
-            const hrs = Math.floor(duration / 3600); const mins = Math.floor((duration % 3600) / 60);
+            const km = (distance / 1000).toFixed(1); const hrs = Math.floor(duration / 3600); const mins = Math.floor((duration % 3600) / 60);
             let timeStr = ''; if (hrs > 0) timeStr += `${hrs}g `; timeStr += `${mins}m`;
-            statsDiv.innerHTML = `Geometryczne: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
+            statsDiv.innerHTML = `🛣️ Zostało: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
             statsDiv.classList.remove('hidden');
         }
 
-        // NOWOŚĆ: Generowanie interfejsu grup i zarządzanie rozwijanym menu wyboru grupy
         function renderSavedAddresses() {
-            const container = document.getElementById('saved-groups-container');
-            container.innerHTML = '';
-            
+            const container = document.getElementById('saved-groups-container'); container.innerHTML = '';
             savedGroups.forEach((group) => {
-                const details = document.createElement('details');
-                details.className = 'group-details';
-                
-                // Summary grupy z przyciskami edycji i usuwania
-                const summary = document.createElement('summary');
-                summary.className = 'group-summary';
+                const details = document.createElement('details'); details.className = 'group-details';
+                const summary = document.createElement('summary'); summary.className = 'group-summary';
                 summary.innerHTML = `
                     <span class="group-summary-text" title="${group.name}">📁 ${group.name} (${group.addresses.length})</span>
                     <div class="group-actions">
-                        <span class="action-edit" onclick="editGroupName('${group.id}', event)">⚙️</span>
+                        <span class="action-edit" onclick="openGroupEditModal('${group.id}', event)">⚙️</span>
                         ${group.id !== 'group_default' ? `<span class="action-delete" onclick="deleteGroup('${group.id}', event)">✖</span>` : ''}
                     </div>
                 `;
                 details.appendChild(summary);
                 
-                // Lista adresów wewnątrz grupy
-                const ul = document.createElement('ul');
-                ul.className = 'saved-item-list';
-                
-                if (group.addresses.length === 0) {
-                    ul.innerHTML = `<li style="font-size:11px; color:#888; padding:5px;">Pusta grupa</li>`;
-                } else {
+                const ul = document.createElement('ul'); ul.className = 'saved-item-list';
+                if (group.addresses.length === 0) { ul.innerHTML = `<li style="font-size:11px; color:#888; padding:5px;">Pusta grupa</li>`; } 
+                else {
                     group.addresses.forEach((addr) => {
-                        const li = document.createElement('li');
-                        li.className = 'saved-item';
+                        const li = document.createElement('li'); li.className = 'saved-item';
                         li.innerHTML = `
                             <input type="checkbox" class="saved-checkbox" data-group-id="${group.id}" data-addr-id="${addr.id}">
                             <span class="name" title="${addr.name}${addr.description ? ' | Opis: ' + addr.description : ''}">
                                 <b>${addr.name}</b> ${addr.description ? `<br><small style="color:#666; font-style:italic;">${addr.description}</small>` : ''}
                             </span>
                             <div class="item-actions">
-                                <span class="action-edit" onclick="editSavedAddress('${group.id}', '${addr.id}')" title="Edytuj nazwę/opis">⚙️</span>
+                                <span class="action-edit" onclick="openAddressEditModal('${group.id}', '${addr.id}')" title="Edytuj nazwę/opis">⚙️</span>
                                 <span class="action-delete" onclick="deleteSavedAddress('${group.id}', '${addr.id}')" title="Usuń adres">✖</span>
                             </div>
                         `;
                         ul.appendChild(li);
                     });
                 }
-                
-                details.appendChild(ul);
-                container.appendChild(details);
+                details.appendChild(ul); container.appendChild(details);
             });
-            
             updateGroupSelectDropdown();
         }
 
         function updateGroupSelectDropdown() {
-            const select = document.getElementById('saved-group-select');
-            select.innerHTML = '';
-            savedGroups.forEach(g => {
-                const opt = document.createElement('option');
-                opt.value = g.id; opt.innerText = g.name;
-                select.appendChild(opt);
-            });
+            const select = document.getElementById('saved-group-select'); select.innerHTML = '';
+            savedGroups.forEach(g => { const opt = document.createElement('option'); opt.value = g.id; opt.innerText = g.name; select.appendChild(opt); });
         }
 
-        // NOWOŚĆ: Tworzenie nowej grupy (maks. 50 znaków)
         function createNewGroup() {
-            let name = prompt("Wpisz nazwę nowej grupy (maks. 50 znaków):");
-            if (name === null) return;
-            name = name.substring(0, 50).trim();
-            if (!name) { alert("Nazwa grupy nie może być pusta!"); return; }
-            
-            const newGroup = { id: 'group_' + Date.now(), name: name, addresses: [] };
-            savedGroups.push(newGroup);
-            saveGroupsToStorage();
+            let name = prompt("Wpisz nazwę nowej grupy (maks. 50 znaków):"); if (name === null) return;
+            name = name.substring(0, 50).trim(); if (!name) { alert("Nazwa grupy nie może być pusta!"); return; }
+            savedGroups.push({ id: 'group_' + Date.now(), name: name, addresses: [] }); saveGroupsToStorage();
         }
 
-        // NOWOŚĆ: Zmiana nazwy grupy (maks. 50 znaków)
-        function editGroupName(groupId, event) {
-            event.stopPropagation(); // Zapobiega automatycznemu otwieraniu/zwijaniu folderu przy kliknięciu w zębatkę
+        // NOWOŚĆ: Funkcja otwierająca modal dla GRUPY
+        function openGroupEditModal(groupId, event) {
+            event.stopPropagation(); // Stop rozwijaniu listy pod spodem
             const group = savedGroups.find(g => g.id === groupId);
             if (!group) return;
-            
-            let newName = prompt("Wpisz nową nazwę grupy (maks. 50 znaków):", group.name);
-            if (newName === null) return;
-            newName = newName.substring(0, 50).trim();
-            if (!newName) return;
-            
-            group.name = newName;
-            saveGroupsToStorage();
+
+            currentEditingType = 'group';
+            currentEditingGroupId = groupId;
+
+            document.getElementById('modal-title').innerText = "Edycja grupy";
+            document.getElementById('modal-input-name').value = group.name;
+            document.getElementById('modal-desc-container').classList.add('hidden'); // Ukrywamy opis dla grupy
+
+            document.getElementById('modal-overlay').classList.remove('hidden');
         }
 
-        // NOWOŚĆ: Usuwanie grupy wraz z weryfikacją zawartości
-        function deleteGroup(groupId, event) {
-            event.stopPropagation();
-            const index = savedGroups.findIndex(g => g.id === groupId);
-            if (index === -1) return;
-            
-            if (savedGroups[index].addresses.length > 0) {
-                if (!confirm("Ta grupa zawiera zapisane adresy. Czy na pewno chcesz usunąć grupę wraz z całą jej zawartością?")) return;
-            } else {
-                if (!confirm("Usunąć tę grupę?")) return;
-            }
-            
-            savedGroups.splice(index, 1);
-            saveGroupsToStorage();
-        }
-
-        // NOWOŚĆ: Edycja nazwy adresu oraz opisu (maksymalnie 50 znaków)
-        function editSavedAddress(groupId, addrId) {
+        // NOWOŚĆ: Funkcja otwierająca modal dla ADRESU
+        function openAddressEditModal(groupId, addrId) {
             const group = savedGroups.find(g => g.id === groupId);
             if (!group) return;
             const addr = group.addresses.find(a => a.id === addrId);
             if (!addr) return;
-            
-            let newName = prompt("Zmień nazwę wyświetlaną adresu (maks. 50 znaków):", addr.name);
-            if (newName === null) return;
-            newName = newName.substring(0, 50).trim();
-            if (!newName) return;
-            
-            let newDesc = prompt("Dodaj lub zmień opis/notatkę do punktu (maks. 50 znaków):", addr.description || "");
-            if (newDesc === null) return;
-            newDesc = newDesc.substring(0, 50).trim();
-            
-            addr.name = newName;
-            addr.description = newDesc;
+
+            currentEditingType = 'address';
+            currentEditingGroupId = groupId;
+            currentEditingAddressId = addrId;
+
+            document.getElementById('modal-title').innerText = "Edycja adresu";
+            document.getElementById('modal-input-name').value = addr.name;
+            document.getElementById('modal-input-desc').value = addr.description || "";
+            document.getElementById('modal-desc-container').classList.remove('hidden'); // Pokazujemy opis dla adresu
+
+            document.getElementById('modal-overlay').classList.remove('hidden');
+        }
+
+        // NOWOŚĆ: Funkcja zamykająca okno modalne
+        function closeModal() {
+            document.getElementById('modal-overlay').classList.add('hidden');
+            currentEditingType = null;
+            currentEditingGroupId = null;
+            currentEditingAddressId = null;
+        }
+
+        // NOWOŚĆ: Funkcja zatwierdzająca zmiany z okna modalnego
+        function saveModalChanges() {
+            const nameInput = document.getElementById('modal-input-name').value.substring(0, 50).trim();
+            if (!nameInput) { alert("Nazwa nie może być pusta!"); return; }
+
+            if (currentEditingType === 'group') {
+                const group = savedGroups.find(g => g.id === currentEditingGroupId);
+                if (group) group.name = nameInput;
+            } 
+            else if (currentEditingType === 'address') {
+                const group = savedGroups.find(g => g.id === currentEditingGroupId);
+                if (group) {
+                    const addr = group.addresses.find(a => a.id === currentEditingAddressId);
+                    if (addr) {
+                        const descInput = document.getElementById('modal-input-desc').value.substring(0, 50).trim();
+                        addr.name = nameInput;
+                        addr.description = descInput;
+                    }
+                }
+            }
+
             saveGroupsToStorage();
+            closeModal();
+        }
+
+        function deleteGroup(groupId, event) {
+            event.stopPropagation(); const index = savedGroups.findIndex(g => g.id === groupId); if (index === -1) return;
+            if (savedGroups[index].addresses.length > 0) { if (!confirm("Ta grupa zawiera zapisane adresy. Czy na pewno chcesz usunąć grupę wraz z całą jej zawartością?")) return; } 
+            else { if (!confirm("Usunąć tę grupę?")) return; }
+            savedGroups.splice(index, 1); saveGroupsToStorage();
         }
 
         async function savePermanentAddress() {
-            const address = document.getElementById('saved-address-input').value;
-            const groupId = document.getElementById('saved-group-select').value;
-            if (!address || !groupId) return;
-            
-            const group = savedGroups.find(g => g.id === groupId);
-            if (!group) return;
-            
-            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
+            const address = document.getElementById('saved-address-input').value; const groupId = document.getElementById('saved-group-select').value; if (!address || !groupId) return;
+            const group = savedGroups.find(g => g.id === groupId); if (!group) return;
             try {
-                const response = await fetch(url);
-                const data = await response.json();
+                const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`); const data = await response.json();
                 if (data && data.length > 0) {
-                    const shortNameFromApi = data[0].display_name.split(',')[0] + ', ' + data[0].display_name.split(',')[1];
-                    
                     group.addresses.push({
-                        id: 'addr_' + Date.now() + Math.floor(Math.random() * 100),
-                        lat: parseFloat(data[0].lat),
-                        lon: parseFloat(data[0].lon),
-                        name: shortNameFromApi,
-                        description: "" // Domyślnie opis jest pusty
+                        id: 'addr_' + Date.now() + Math.floor(Math.random() * 100), lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon),
+                        name: data[0].display_name.split(',')[0] + ', ' + data[0].display_name.split(',')[1], description: ""
                     });
-                    
-                    saveGroupsToStorage();
-                    document.getElementById('saved-address-input').value = '';
+                    saveGroupsToStorage(); document.getElementById('saved-address-input').value = '';
                 } else { alert("Nie znaleziono adresu."); }
             } catch (error) { alert("Błąd połączenia."); }
         }
 
-        // NOWOŚĆ: Dodawanie zaznaczonych z uwzględnieniem spersonalizowanych nazw i opisów
         function addSelectedSaved() {
-            const checkboxes = document.querySelectorAll('.saved-checkbox:checked');
-            if(checkboxes.length === 0) { alert("Zaznacz najpierw adresy z grup."); return; }
-            
+            const checkboxes = document.querySelectorAll('.saved-checkbox:checked'); if(checkboxes.length === 0) { alert("Zaznacz najpierw adresy z grup."); return; }
             checkboxes.forEach(cb => {
-                const gId = cb.getAttribute('data-group-id');
-                const aId = cb.getAttribute('data-addr-id');
-                const group = savedGroups.find(g => g.id === gId);
+                const group = savedGroups.find(g => g.id === cb.getAttribute('data-group-id'));
                 if (group) {
-                    const addr = group.addresses.find(a => a.id === aId);
-                    if (addr) {
-                        addPointToMapAndList(addr.lat, addr.lon, addr.name, addr.description || "");
-                    }
+                    const addr = group.addresses.find(a => a.id === cb.getAttribute('data-addr-id'));
+                    if (addr) addPointToMapAndList(addr.lat, addr.lon, addr.name, addr.description || "");
                 }
                 cb.checked = false;
             });
         }
 
         function deleteSavedAddress(groupId, addrId) {
-            const group = savedGroups.find(g => g.id === groupId);
-            if (!group) return;
+            const group = savedGroups.find(g => g.id === groupId); if (!group) return;
             const index = group.addresses.findIndex(a => a.id === addrId);
-            if (index !== -1 && confirm("Usunąć ten adres ze stałych?")) {
-                group.addresses.splice(index, 1);
-                saveGroupsToStorage();
-            }
+            if (index !== -1 && confirm("Usunąć ten adres ze stałych?")) { group.addresses.splice(index, 1); saveGroupsToStorage(); }
         }
 
-        function saveGroupsToStorage() {
-            localStorage.setItem('courierSavedGroups', JSON.stringify(savedGroups));
-            renderSavedAddresses();
-        }
+        function saveGroupsToStorage() { localStorage.setItem('courierSavedGroups', JSON.stringify(savedGroups)); renderSavedAddresses(); }
 
-        // Zmiana: Dymek popup na mapie zawiera teraz dedykowaną sekcję na opis punktu
         function drawAllMarkers() {
             markersLayer.clearLayers();
             deliveryPoints.forEach((point) => {
-                let className = 'custom-marker';
-                if (point.status === 'completed') className += ' zaliczony';
-                else if (point.status === 'postponed') className += ' pozniej';
-                else if (point.isBase) className += ' baza';
-
-                const label = point.optLabel !== undefined ? point.optLabel : '';
-                const customIcon = L.divIcon({ className: className, html: label, iconSize: [32, 32], iconAnchor: [16, 16] });
-
+                let className = 'custom-marker'; if (point.status === 'completed') className += ' zaliczony'; else if (point.status === 'postponed') className += ' pozniej'; else if (point.isBase) className += ' baza';
+                const customIcon = L.divIcon({ className: className, html: point.optLabel !== undefined ? point.optLabel : '', iconSize: [32, 32], iconAnchor: [16, 16] });
                 const popupHtml = `
                     <div style="font-size: 13px; min-width: 150px;">
                         <b>Kolejność: ${point.isBase ? 'Baza' : (point.optLabel !== undefined ? point.optLabel : 'Brak')}</b><br>
                         <strong style="font-size:14px; color:#222;">${point.name}</strong><br>
-                        
                         ${point.description ? `<div style="margin-top:4px; padding: 4px; background:#f8f9fa; border-left: 3px solid #17a2b8; font-style: italic; color: #555;">📝 ${point.description}</div>` : ''}
-                        
                         ${point.status === 'pending' ? `
                         <div style="margin-top: 10px;">
                             <button class="btn-danger" style="padding: 5px; margin-bottom: 5px;" onclick="updatePointStatus(${point.id}, 'completed')">✔️ Zaliczony</button>
                             <button class="btn-warning" style="padding: 5px; margin-bottom: 0;" onclick="updatePointStatus(${point.id}, 'postponed')">🕒 Później</button>
-                        </div>
-                        ` : `
-                        <div style="margin-top: 10px; color: ${point.status === 'completed' ? 'red' : '#d39e00'}; font-weight: bold;">
-                            Status: ${point.status === 'completed' ? 'Zaliczony' : 'Zostawiony na później'}
-                        </div>
-                        <button style="padding: 5px; margin-top: 5px; background: #6c757d; color: white;" onclick="updatePointStatus(${point.id}, 'pending')">Cofnij zmianę</button>
-                        `}
+                        </div>` : `
+                        <div style="margin-top: 10px; color: ${point.status === 'completed' ? 'red' : '#d39e00'}; font-weight: bold;">Status: ${point.status === 'completed' ? 'Zaliczony' : 'Zostawiony na później'}</div>
+                        <button style="padding: 5px; margin-top: 5px; background: #6c757d; color: white;" onclick="updatePointStatus(${point.id}, 'pending')">Cofnij zmianę</button>`}
                     </div>
                 `;
-
                 L.marker([point.lat, point.lon], { icon: customIcon }).addTo(markersLayer).bindPopup(popupHtml);
             });
         }
@@ -467,34 +442,24 @@
         }
 
         async function optimizeRoute() {
-            const routePoints = deliveryPoints.filter(p => p.status === 'pending');
-            if (routePoints.length < 2) { alert("Musisz dodać co najmniej 2 punkty!"); return; }
-            const coordinatesString = routePoints.map(p => `${p.lon},${p.lat}`).join(';');
-            const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordinatesString}?source=first&roundtrip=true&overview=full&geometries=geojson`;
+            const routePoints = deliveryPoints.filter(p => p.status === 'pending'); if (routePoints.length < 2) { alert("Musisz dodać co najmniej 2 punkty!"); return; }
             try {
-                const response = await fetch(osrmUrl); const data = await response.json();
+                const response = await fetch(`https://router.project-osrm.org/trip/v1/driving/${routePoints.map(p => `${p.lon},${p.lat}`).join(';')}?source=first&roundtrip=true&overview=full&geometries=geojson`);
+                const data = await response.json();
                 if (data.code === 'Ok') {
                     if (routeLayer) map.removeLayer(routeLayer);
                     routeLayer = L.geoJSON(data.trips[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
-                    routePoints.forEach((point, index) => {
-                        const optIndex = data.waypoints[index].waypoint_index;
-                        point.optLabel = optIndex === 0 ? 'B' : optIndex; point.isBase = (optIndex === 0);
-                    });
+                    routePoints.forEach((point, index) => { const optIndex = data.waypoints[index].waypoint_index; point.optLabel = optIndex === 0 ? 'B' : optIndex; point.isBase = (optIndex === 0); });
                     updateListUI(); drawAllMarkers(); updateRouteStats(data.trips[0].distance, data.trips[0].duration);
-                    if (!trackingId) map.fitBounds(routeLayer.getBounds());
-                    if (window.innerWidth < 768) togglePanel();
+                    if (!trackingId) map.fitBounds(routeLayer.getBounds()); if (window.innerWidth < 768) togglePanel();
                 } else { alert("Nie udało się wyznaczyć trasy."); }
             } catch (error) {}
         }
 
         async function recalculateRouteLine() {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending');
-            routePoints.sort((a, b) => {
-                if (a.isBase) return 1; if (b.isBase) return -1;
-                return (a.optLabel !== undefined ? a.optLabel : 999) - (b.optLabel !== undefined ? b.optLabel : 999);
-            });
-            let coordsArray = [];
-            if (trackingId && lastKnownPosition) coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`);
+            routePoints.sort((a, b) => { if (a.isBase) return 1; if (b.isBase) return -1; return (a.optLabel !== undefined ? a.optLabel : 999) - (b.optLabel !== undefined ? b.optLabel : 999); });
+            let coordsArray = []; if (trackingId && lastKnownPosition) coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`);
             routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));
             if (coordsArray.length < 2) { if (routeLayer) map.removeLayer(routeLayer); document.getElementById('route-stats').classList.add('hidden'); return; }
             try {
@@ -512,8 +477,7 @@
             if (confirm("Usunąć trasę z mapy?")) {
                 deliveryPoints = []; updateListUI(); markersLayer.clearLayers();
                 if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
-                document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null;
-                document.getElementById('route-stats').classList.add('hidden');
+                document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null; document.getElementById('route-stats').classList.add('hidden');
             }
         }
 
@@ -552,7 +516,6 @@
             }
         }
 
-        // Pierwsze uruchomienie rysowania struktury grup
         renderSavedAddresses();
     </script>
 </body>
