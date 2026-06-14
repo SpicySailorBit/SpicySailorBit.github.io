@@ -139,10 +139,10 @@
                 </div>
             </details>
             
-            <button class="btn-success" style="margin-top: 10px;" onclick="optimizeRoute()">🛣️ Wyznacz trasę</button>
             <div id="route-stats" class="hidden"></div>
+            
             <hr>
-            <button id="track-btn" class="btn-success" style="background-color: #28a745;" onclick="toggleDriveMode()">🚀 Wyruszam!</button>
+            <button id="track-btn" class="btn-success" style="background-color: #28a745; padding: 12px; font-size: 16px;" onclick="toggleDriveMode()">🚀 Wyruszam!</button>
             
             <h4 style="margin-bottom: 5px; margin-top: 10px;">Lista punktów:</h4>
             <ul id="points-list"></ul>
@@ -201,7 +201,6 @@
         let lastKnownPosition = null;
         let isFirstGPSFix = true; 
         
-        // NOWOŚĆ: Zmienna zapamiętująca, gdzie ostatnio wyliczono trasę, by wymusić Rerouting po 100 metrach
         let lastRouteCalcPosition = null; 
 
         let currentEditingType = null; 
@@ -453,21 +452,21 @@
             }
         }
 
+        // ZMIENIONE: Funkcja nie jest już przyciskiem, jest wywoływana w tle i zwraca true/false
         async function optimizeRoute() {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending'); 
-            if (routePoints.length < 1) { alert("Musisz dodać co najmniej 1 punkt!"); return; }
+            if (routePoints.length < 1) { return true; } // Zezwalaj na jazdę bez punktów
 
             if (!lastKnownPosition) {
                 alert("Oczekiwanie na sygnał GPS... Czerwona kropka musi być widoczna, aby wyznaczyć trasę od Twojej pozycji.");
-                return;
+                return false;
             }
             
             if (routePoints.length === 1) {
                 routePoints[0].optLabel = 1;
                 updateListUI(); drawAllMarkers();
-                recalculateRouteLine(true); 
-                if (window.innerWidth < 768) togglePanel();
-                return;
+                await recalculateRouteLine(true); 
+                return true;
             }
 
             let coordsArray = [];
@@ -487,11 +486,16 @@
                     });
                     
                     updateListUI(); drawAllMarkers();
-                    recalculateRouteLine(true);
-                    
-                    if (window.innerWidth < 768) togglePanel();
-                } else { alert("Nie udało się wyznaczyć optymalnej trasy."); }
-            } catch (error) { console.error(error); }
+                    await recalculateRouteLine(true);
+                    return true;
+                } else { 
+                    alert("Nie udało się wyznaczyć optymalnej trasy. Spróbuj ponownie."); 
+                    return false; 
+                }
+            } catch (error) { 
+                alert("Błąd połączenia. Sprawdź internet.");
+                return false; 
+            }
         }
 
         async function recalculateRouteLine(fitBounds = false) {
@@ -515,10 +519,8 @@
                     if (routeLayer) map.removeLayer(routeLayer);
                     routeLayer = L.geoJSON(data.routes[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
                     updateRouteStats(data.routes[0].distance, data.routes[0].duration);
-                    
-                    // ZMIANA: Gdy poprawnie narysujemy trasę, zapamiętujemy punkt początkowy do logiki zjechania z trasy (rerouting)
                     if (lastKnownPosition) lastRouteCalcPosition = [...lastKnownPosition];
-
+                    
                     if (fitBounds && !isFollowingGPS) {
                         map.fitBounds(routeLayer.getBounds());
                     }
@@ -531,23 +533,47 @@
                 deliveryPoints = []; updateListUI(); markersLayer.clearLayers();
                 if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
                 document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null; document.getElementById('route-stats').classList.add('hidden');
-                lastRouteCalcPosition = null; // Resetujemy pamięć Reroutingu
+                lastRouteCalcPosition = null; 
             }
         }
 
         map.on('dragstart', () => { if (isFollowingGPS) { isFollowingGPS = false; document.getElementById('center-btn').classList.remove('hidden'); updateAlertLift(); } });
         function recenterMap() { isFollowingGPS = true; document.getElementById('center-btn').classList.add('hidden'); updateAlertLift(); if (lastKnownPosition) { map.panTo(lastKnownPosition); } }
 
-        function toggleDriveMode() {
+        // ZMIENIONE: Funkcja "Wyruszam" łączy w sobie startowanie podążania ORAZ wyznaczanie trasy
+        async function toggleDriveMode() {
             const btn = document.getElementById('track-btn');
             if (isFollowingGPS) {
+                // Zakończenie jazdy
                 isFollowingGPS = false;
-                btn.innerText = "🚀 Wyruszam!"; btn.className = "btn-success"; btn.style.backgroundColor = "#28a745";
-                document.getElementById('center-btn').classList.add('hidden'); updateAlertLift(); 
+                btn.innerText = "🚀 Wyruszam!"; 
+                btn.className = "btn-success"; 
+                btn.style.backgroundColor = "#28a745";
+                document.getElementById('center-btn').classList.add('hidden'); 
+                updateAlertLift(); 
             } else {
+                // Rozpoczęcie jazdy
+                const routePoints = deliveryPoints.filter(p => p.status === 'pending');
+                
+                // Jeśli są na mapie adresy do przejechania, najpierw spróbuj wyznaczyć trasę
+                if (routePoints.length > 0) {
+                    btn.innerText = "⏳ Wyznaczam trasę..."; 
+                    const success = await optimizeRoute();
+                    if (!success) {
+                        // Jeśli się nie udało (np. brak GPS), zresetuj guzik do pierwotnego stanu i przerwij
+                        btn.innerText = "🚀 Wyruszam!";
+                        return; 
+                    }
+                }
+                
+                // Trasa gotowa lub brak punktów - startujemy podążanie kamery
                 isFollowingGPS = true;
-                btn.innerText = "⏹ Zatrzymaj podążanie"; btn.className = "btn-danger"; btn.style.backgroundColor = "#dc3545";
-                document.getElementById('center-btn').classList.add('hidden'); updateAlertLift();
+                btn.innerText = "⏹ Zatrzymaj podążanie"; 
+                btn.className = "btn-danger"; 
+                btn.style.backgroundColor = "#dc3545";
+                document.getElementById('center-btn').classList.add('hidden'); 
+                updateAlertLift();
+                
                 if (lastKnownPosition) map.setView(lastKnownPosition, 16);
                 const content = document.getElementById('ui-content');
                 if (!content.classList.contains('hidden')) { togglePanel(); }
@@ -576,14 +602,12 @@
                     }
                     if (isFollowingGPS) { 
                         map.panTo([lat, lon]); 
-                        
-                        // NOWOŚĆ: Logika Reroutingu (Przeliczanie po przejechaniu 100m)
                         if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) {
                             if (!lastRouteCalcPosition) {
                                 lastRouteCalcPosition = [lat, lon];
                             } else {
                                 const distMoved = map.distance([lat, lon], lastRouteCalcPosition);
-                                if (distMoved > 100) { // Próg przebudowy to 100 metrów
+                                if (distMoved > 100) { 
                                     lastRouteCalcPosition = [lat, lon];
                                     recalculateRouteLine(false);
                                 }
