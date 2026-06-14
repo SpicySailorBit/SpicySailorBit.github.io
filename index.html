@@ -285,7 +285,7 @@
             const statsDiv = document.getElementById('route-stats');
             const km = (distance / 1000).toFixed(1); const hrs = Math.floor(duration / 3600); const mins = Math.floor((duration % 3600) / 60);
             let timeStr = ''; if (hrs > 0) timeStr += `${hrs}g `; timeStr += `${mins}m`;
-            statsDiv.innerHTML = `🛣️ Zostało: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
+            statsDiv.innerHTML = `¼ Dystans: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
             statsDiv.classList.remove('hidden');
         }
 
@@ -446,11 +446,10 @@
             if(pt) {
                 pt.status = newStatus; map.closePopup();
                 if(currentClosestId === id) { document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null; }
-                updateListUI(); drawAllMarkers(); recalculateRouteLine(false); // Aktualizacja tylko samej linii 
+                updateListUI(); drawAllMarkers(); recalculateRouteLine(false); 
             }
         }
 
-        // ZMIANA: Twarda optymalizacja i wymuszenie renderowania linii
         async function optimizeRoute() {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending'); 
             if (routePoints.length < 1) { alert("Musisz dodać co najmniej 1 punkt!"); return; }
@@ -463,17 +462,15 @@
             if (routePoints.length === 1) {
                 routePoints[0].optLabel = 1;
                 updateListUI(); drawAllMarkers();
-                recalculateRouteLine(true); // Opcjonalnie przybliża mapę
+                recalculateRouteLine(true); 
                 if (window.innerWidth < 768) togglePanel();
                 return;
             }
 
-            // Ustawiamy sztywne ramy dla algorytmu (Zawsze startujemy od GPS, kończymy gdziekolwiek jest sensownie)
             let coordsArray = [];
-            coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); // 0: GPS
-            routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));     // 1-N: Paczki
+            coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); 
+            routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));     
 
-            // Zapytanie wysłane BEZ zapytań o geometrię w formacie trip
             const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordsArray.join(';')}?source=first&roundtrip=false&overview=false`;
 
             try {
@@ -481,16 +478,12 @@
                 const data = await response.json();
                 
                 if (data.code === 'Ok') {
-                    // Aktualizujemy numery na punktach na podstawie danych serwera
                     routePoints.forEach((point, index) => { 
-                        // Waypoints[index + 1] dlatego, że index 0 to współrzędne GPS
                         const optIndex = data.waypoints[index + 1].waypoint_index; 
                         point.optLabel = optIndex; 
                     });
                     
                     updateListUI(); drawAllMarkers();
-                    
-                    // Wyrzucamy rysowanie ołówkiem do drugiej funkcji (route API zamiast trip API)
                     recalculateRouteLine(true);
                     
                     if (window.innerWidth < 768) togglePanel();
@@ -498,16 +491,13 @@
             } catch (error) { console.error(error); }
         }
 
-        // ZMIANA: Funkcja wyznaczająca prostą linię pomiędzy posortowanymi numerycznie punktami
         async function recalculateRouteLine(fitBounds = false) {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending');
-            
-            // Sortujemy punkty wg ułożonej kolejności (1, 2, 3...)
             routePoints.sort((a, b) => { return (a.optLabel !== undefined ? a.optLabel : 999) - (b.optLabel !== undefined ? b.optLabel : 999); });
             
             let coordsArray = []; 
-            if (lastKnownPosition) coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); // Pierwszy do rysowania to GPS
-            routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`)); // Następnie po kolei paczki
+            if (lastKnownPosition) coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); 
+            routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`)); 
 
             if (coordsArray.length < 2) { 
                 if (routeLayer) map.removeLayer(routeLayer); 
@@ -523,7 +513,6 @@
                     routeLayer = L.geoJSON(data.routes[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
                     updateRouteStats(data.routes[0].distance, data.routes[0].duration);
                     
-                    // Dopasowujemy widok do całej, wyznaczonej linii (jeśli flaga to nakazuje i nie jedziemy zablokowani)
                     if (fitBounds && !isFollowingGPS) {
                         map.fitBounds(routeLayer.getBounds());
                     }
@@ -580,7 +569,10 @@
                     }
                     if (isFollowingGPS) { map.panTo([lat, lon]); }
 
-                    let closestPoint = null; let minDistance = 1000; 
+                    let closestPoint = null; 
+                    // ZMIANA: Próg odległości zmieniony na 300 metrów
+                    let minDistance = 300; 
+                    
                     deliveryPoints.forEach(pt => { if (pt.status === 'pending') { const dist = map.distance([lat, lon], [pt.lat, pt.lon]); if (dist < minDistance) { minDistance = dist; closestPoint = pt; } } });
                     
                     const alertDiv = document.getElementById('proximity-alert');
