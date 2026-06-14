@@ -200,6 +200,9 @@
         let isFollowingGPS = false; 
         let lastKnownPosition = null;
         let isFirstGPSFix = true; 
+        
+        // NOWOŚĆ: Zmienna zapamiętująca, gdzie ostatnio wyliczono trasę, by wymusić Rerouting po 100 metrach
+        let lastRouteCalcPosition = null; 
 
         let currentEditingType = null; 
         let currentEditingGroupId = null;
@@ -285,7 +288,7 @@
             const statsDiv = document.getElementById('route-stats');
             const km = (distance / 1000).toFixed(1); const hrs = Math.floor(duration / 3600); const mins = Math.floor((duration % 3600) / 60);
             let timeStr = ''; if (hrs > 0) timeStr += `${hrs}g `; timeStr += `${mins}m`;
-            statsDiv.innerHTML = `¼ Dystans: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
+            statsDiv.innerHTML = `🛣️ Zostało: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
             statsDiv.classList.remove('hidden');
         }
 
@@ -513,6 +516,9 @@
                     routeLayer = L.geoJSON(data.routes[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
                     updateRouteStats(data.routes[0].distance, data.routes[0].duration);
                     
+                    // ZMIANA: Gdy poprawnie narysujemy trasę, zapamiętujemy punkt początkowy do logiki zjechania z trasy (rerouting)
+                    if (lastKnownPosition) lastRouteCalcPosition = [...lastKnownPosition];
+
                     if (fitBounds && !isFollowingGPS) {
                         map.fitBounds(routeLayer.getBounds());
                     }
@@ -525,6 +531,7 @@
                 deliveryPoints = []; updateListUI(); markersLayer.clearLayers();
                 if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
                 document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null; document.getElementById('route-stats').classList.add('hidden');
+                lastRouteCalcPosition = null; // Resetujemy pamięć Reroutingu
             }
         }
 
@@ -567,12 +574,24 @@
                         map.setView([lat, lon], 16); isFirstGPSFix = false; 
                         if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) recalculateRouteLine(); 
                     }
-                    if (isFollowingGPS) { map.panTo([lat, lon]); }
+                    if (isFollowingGPS) { 
+                        map.panTo([lat, lon]); 
+                        
+                        // NOWOŚĆ: Logika Reroutingu (Przeliczanie po przejechaniu 100m)
+                        if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) {
+                            if (!lastRouteCalcPosition) {
+                                lastRouteCalcPosition = [lat, lon];
+                            } else {
+                                const distMoved = map.distance([lat, lon], lastRouteCalcPosition);
+                                if (distMoved > 100) { // Próg przebudowy to 100 metrów
+                                    lastRouteCalcPosition = [lat, lon];
+                                    recalculateRouteLine(false);
+                                }
+                            }
+                        }
+                    }
 
-                    let closestPoint = null; 
-                    // ZMIANA: Próg odległości zmieniony na 300 metrów
-                    let minDistance = 300; 
-                    
+                    let closestPoint = null; let minDistance = 300; 
                     deliveryPoints.forEach(pt => { if (pt.status === 'pending') { const dist = map.distance([lat, lon], [pt.lat, pt.lon]); if (dist < minDistance) { minDistance = dist; closestPoint = pt; } } });
                     
                     const alertDiv = document.getElementById('proximity-alert');
