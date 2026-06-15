@@ -49,6 +49,9 @@
         }
         .custom-marker.zaliczony { background-color: #dc3545; } 
         .custom-marker.pozniej { background-color: #ffc107; color: #212529; } 
+        
+        /* NOWOŚĆ: Wygląd punktu priorytetowego na mapie */
+        .custom-marker.priorytet { background-color: #fd7e14; border-color: #343a40; z-index: 1000 !important; }
 
         .group-details { background: #f1f3f5; padding: 5px; border-radius: 4px; border: 1px solid #dee2e6; margin-bottom: 8px; }
         .group-summary { font-weight: bold; cursor: pointer; outline: none; display: flex; justify-content: space-between; align-items: center; padding: 5px; font-size: 14px; }
@@ -140,7 +143,6 @@
             </details>
             
             <div id="route-stats" class="hidden"></div>
-            
             <hr>
             <button id="track-btn" class="btn-success" style="background-color: #28a745; padding: 12px; font-size: 16px;" onclick="toggleDriveMode()">🚀 Wyruszam!</button>
             
@@ -202,6 +204,9 @@
         let isFirstGPSFix = true; 
         
         let lastRouteCalcPosition = null; 
+        
+        // NOWOŚĆ: Zmienna trzymająca ID priorytetowego punktu
+        let priorityPointId = null;
 
         let currentEditingType = null; 
         let currentEditingGroupId = null;
@@ -272,14 +277,19 @@
             return true;
         }
 
+        // ZMIANA: Wyświetlanie gwiazdki przy punkcie priorytetowym na liście
         function updateListUI() {
             const listElement = document.getElementById('points-list'); listElement.innerHTML = ''; 
             deliveryPoints.forEach((point) => {
                 const li = document.createElement('li'); const shortName = point.name.split(',')[0];
                 let prefix = point.optLabel !== undefined ? `${point.optLabel}. ` : '- ';
+                
+                let star = (point.id === priorityPointId) ? '⭐ ' : '';
+                
                 if (point.status === 'completed') { li.style.textDecoration = 'line-through'; li.style.color = 'red'; }
                 if (point.status === 'postponed') { li.style.color = '#d39e00'; }
-                li.innerText = `${prefix}${shortName}`; listElement.appendChild(li);
+                
+                li.innerText = `${prefix}${star}${shortName}`; listElement.appendChild(li);
             });
         }
 
@@ -420,45 +430,84 @@
 
         function saveGroupsToStorage() { localStorage.setItem('courierSavedGroups', JSON.stringify(savedGroups)); renderSavedAddresses(); }
 
+        // ZMIANA: Dodano przycisk "Priorytet" do Dymka i kolor markera
         function drawAllMarkers() {
             markersLayer.clearLayers();
             deliveryPoints.forEach((point) => {
-                let className = 'custom-marker'; if (point.status === 'completed') className += ' zaliczony'; else if (point.status === 'postponed') className += ' pozniej';
+                let className = 'custom-marker'; 
+                if (point.status === 'completed') className += ' zaliczony'; 
+                else if (point.status === 'postponed') className += ' pozniej';
+                else if (point.id === priorityPointId) className += ' priorytet'; // Zmiana koloru dla priorytetu
+                
                 const customIcon = L.divIcon({ className: className, html: point.optLabel !== undefined ? point.optLabel : '', iconSize: [32, 32], iconAnchor: [16, 16] });
+                
                 const popupHtml = `
                     <div style="font-size: 13px; min-width: 150px;">
                         <b>Kolejność: ${point.optLabel !== undefined ? point.optLabel : 'Brak'}</b><br>
                         <strong style="font-size:14px; color:#222;">${point.name}</strong><br>
                         ${point.description ? `<div style="margin-top:4px; padding: 4px; background:#f8f9fa; border-left: 3px solid #17a2b8; font-style: italic; color: #555;">📝 ${point.description}</div>` : ''}
-                        ${point.status === 'pending' ? `
+                        
                         <div style="margin-top: 10px;">
+                            <button class="btn-info" style="padding: 8px; font-size: 14px; margin-bottom: 8px; width: 100%; background-color: #17a2b8;" onclick="setPriorityPoint(${point.id})">⭐ Priorytet</button>
+                            
+                            ${point.status === 'pending' ? `
                             <button class="btn-danger" style="padding: 5px; margin-bottom: 5px;" onclick="updatePointStatus(${point.id}, 'completed')">✔️ Zaliczony</button>
                             <button class="btn-warning" style="padding: 5px; margin-bottom: 0;" onclick="updatePointStatus(${point.id}, 'postponed')">🕒 Później</button>
-                        </div>` : `
-                        <div style="margin-top: 10px; color: ${point.status === 'completed' ? 'red' : '#d39e00'}; font-weight: bold;">Status: ${point.status === 'completed' ? 'Zaliczony' : 'Zostawiony na później'}</div>
-                        <button style="padding: 5px; margin-top: 5px; background: #6c757d; color: white;" onclick="updatePointStatus(${point.id}, 'pending')">Cofnij zmianę</button>`}
+                            ` : `
+                            <div style="margin-bottom: 5px; color: ${point.status === 'completed' ? 'red' : '#d39e00'}; font-weight: bold; text-align: center;">
+                                Status: ${point.status === 'completed' ? 'Zaliczony' : 'Zostawiony na później'}
+                            </div>
+                            <button style="padding: 5px; margin-top: 0; background: #6c757d; color: white;" onclick="updatePointStatus(${point.id}, 'pending')">Cofnij zmianę</button>
+                            `}
+                        </div>
                     </div>
                 `;
                 L.marker([point.lat, point.lon], { icon: customIcon }).addTo(markersLayer).bindPopup(popupHtml);
             });
         }
 
+        // NOWOŚĆ: Funkcja aktywująca priorytet i wywołująca przeliczenie trasy
+        window.setPriorityPoint = async function(id) {
+            priorityPointId = id;
+            const pt = deliveryPoints.find(p => p.id === id);
+            if(pt) pt.status = 'pending'; // Zawsze wznawiaj punkt, jeśli był odznaczony
+            
+            map.closePopup();
+            
+            const btn = document.getElementById('track-btn');
+            btn.innerText = "⏳ Przeliczanie priorytetu..."; 
+            
+            await optimizeRoute();
+            
+            if (isFollowingGPS) {
+                btn.innerText = "⏹ Zatrzymaj podążanie";
+            } else {
+                btn.innerText = "🚀 Wyruszam!";
+            }
+        }
+
         window.updatePointStatus = function(id, newStatus) {
             const pt = deliveryPoints.find(p => p.id === id);
             if(pt) {
-                pt.status = newStatus; map.closePopup();
+                pt.status = newStatus; 
+                // ZMIANA: Wyłączenie flagi priorytetu, gdy punkt zostaje zaliczony/odłożony
+                if (id === priorityPointId && newStatus !== 'pending') {
+                    priorityPointId = null; 
+                }
+                
+                map.closePopup();
                 if(currentClosestId === id) { document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null; }
                 updateListUI(); drawAllMarkers(); recalculateRouteLine(false); 
             }
         }
 
-        // ZMIENIONE: Funkcja nie jest już przyciskiem, jest wywoływana w tle i zwraca true/false
+        // ZMIANA: Genialna logika układania trasy z uwzględnieniem Priorytetu
         async function optimizeRoute() {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending'); 
-            if (routePoints.length < 1) { return true; } // Zezwalaj na jazdę bez punktów
+            if (routePoints.length < 1) { return true; } 
 
             if (!lastKnownPosition) {
-                alert("Oczekiwanie na sygnał GPS... Czerwona kropka musi być widoczna, aby wyznaczyć trasę od Twojej pozycji.");
+                alert("Oczekiwanie na sygnał GPS... Czerwona kropka musi być widoczna, aby wyznaczyć trasę.");
                 return false;
             }
             
@@ -470,31 +519,51 @@
             }
 
             let coordsArray = [];
-            coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); 
-            routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));     
-
-            const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordsArray.join(';')}?source=first&roundtrip=false&overview=false`;
-
-            try {
-                const response = await fetch(osrmUrl);
-                const data = await response.json();
+            
+            // JEŚLI MAMY PUNKT PRIORYTETOWY NA LIŚCIE PENDING:
+            if (priorityPointId && routePoints.some(p => p.id === priorityPointId)) {
+                const prioPt = routePoints.find(p => p.id === priorityPointId);
+                const others = routePoints.filter(p => p.id !== priorityPointId);
                 
-                if (data.code === 'Ok') {
-                    routePoints.forEach((point, index) => { 
-                        const optIndex = data.waypoints[index + 1].waypoint_index; 
-                        point.optLabel = optIndex; 
-                    });
-                    
-                    updateListUI(); drawAllMarkers();
-                    await recalculateRouteLine(true);
-                    return true;
-                } else { 
-                    alert("Nie udało się wyznaczyć optymalnej trasy. Spróbuj ponownie."); 
-                    return false; 
-                }
-            } catch (error) { 
-                alert("Błąd połączenia. Sprawdź internet.");
-                return false; 
+                // Optymalizacja OSRM startuje z punktu priorytetowego
+                coordsArray.push(`${prioPt.lon},${prioPt.lat}`); 
+                others.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));
+                
+                const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordsArray.join(';')}?source=first&roundtrip=false&overview=false`;
+                try {
+                    const response = await fetch(osrmUrl);
+                    const data = await response.json();
+                    if (data.code === 'Ok') {
+                        prioPt.optLabel = 1; // Priorytet to zawsze punkt nr 1
+                        others.forEach((point, index) => { 
+                            point.optLabel = data.waypoints[index + 1].waypoint_index + 1; // Pozostałe od 2 w górę
+                        });
+                        updateListUI(); drawAllMarkers();
+                        await recalculateRouteLine(true);
+                        return true;
+                    } else { alert("Nie udało się przeliczyć priorytetu."); return false; }
+                } catch (error) { alert("Błąd połączenia."); return false; }
+            } 
+            // NORMALNE ZACHOWANIE (Bez Priorytetu)
+            else {
+                coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); 
+                routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));     
+
+                const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordsArray.join(';')}?source=first&roundtrip=false&overview=false`;
+
+                try {
+                    const response = await fetch(osrmUrl);
+                    const data = await response.json();
+                    if (data.code === 'Ok') {
+                        routePoints.forEach((point, index) => { 
+                            const optIndex = data.waypoints[index + 1].waypoint_index; 
+                            point.optLabel = optIndex; 
+                        });
+                        updateListUI(); drawAllMarkers();
+                        await recalculateRouteLine(true);
+                        return true;
+                    } else { alert("Nie udało się wyznaczyć optymalnej trasy."); return false; }
+                } catch (error) { alert("Błąd połączenia."); return false; }
             }
         }
 
@@ -533,18 +602,16 @@
                 deliveryPoints = []; updateListUI(); markersLayer.clearLayers();
                 if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
                 document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null; document.getElementById('route-stats').classList.add('hidden');
-                lastRouteCalcPosition = null; 
+                lastRouteCalcPosition = null; priorityPointId = null;
             }
         }
 
         map.on('dragstart', () => { if (isFollowingGPS) { isFollowingGPS = false; document.getElementById('center-btn').classList.remove('hidden'); updateAlertLift(); } });
         function recenterMap() { isFollowingGPS = true; document.getElementById('center-btn').classList.add('hidden'); updateAlertLift(); if (lastKnownPosition) { map.panTo(lastKnownPosition); } }
 
-        // ZMIENIONE: Funkcja "Wyruszam" łączy w sobie startowanie podążania ORAZ wyznaczanie trasy
         async function toggleDriveMode() {
             const btn = document.getElementById('track-btn');
             if (isFollowingGPS) {
-                // Zakończenie jazdy
                 isFollowingGPS = false;
                 btn.innerText = "🚀 Wyruszam!"; 
                 btn.className = "btn-success"; 
@@ -552,21 +619,16 @@
                 document.getElementById('center-btn').classList.add('hidden'); 
                 updateAlertLift(); 
             } else {
-                // Rozpoczęcie jazdy
                 const routePoints = deliveryPoints.filter(p => p.status === 'pending');
-                
-                // Jeśli są na mapie adresy do przejechania, najpierw spróbuj wyznaczyć trasę
                 if (routePoints.length > 0) {
                     btn.innerText = "⏳ Wyznaczam trasę..."; 
                     const success = await optimizeRoute();
                     if (!success) {
-                        // Jeśli się nie udało (np. brak GPS), zresetuj guzik do pierwotnego stanu i przerwij
                         btn.innerText = "🚀 Wyruszam!";
                         return; 
                     }
                 }
                 
-                // Trasa gotowa lub brak punktów - startujemy podążanie kamery
                 isFollowingGPS = true;
                 btn.innerText = "⏹ Zatrzymaj podążanie"; 
                 btn.className = "btn-danger"; 
