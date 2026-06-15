@@ -206,7 +206,11 @@
         let trackingId = null;
         let courierMarker = null;
         let currentClosestId = null; 
+        
+        // NOWOŚĆ: Dwie flagi. isDriveModeActive oznacza "Wyruszam!" jest włączone, a isFollowingGPS odpowiada za centrowanie
+        let isDriveModeActive = false;
         let isFollowingGPS = false; 
+        
         let lastKnownPosition = null;
         let isFirstGPSFix = true; 
         
@@ -255,7 +259,7 @@
         }
 
         document.addEventListener('visibilitychange', async () => {
-            if (document.visibilityState === 'visible' && isFollowingGPS) { await requestWakeLock(); }
+            if (document.visibilityState === 'visible' && isDriveModeActive) { await requestWakeLock(); }
         });
 
         function updateAlertLift() {
@@ -506,7 +510,7 @@
             btn.innerText = "⏳ Przeliczanie priorytetu..."; 
             await optimizeRoute();
             
-            if (isFollowingGPS) { btn.innerText = "⏹ Zatrzymaj podążanie"; } 
+            if (isDriveModeActive) { btn.innerText = "⏹ Zatrzymaj podążanie"; } 
             else { btn.innerText = "🚀 Wyruszam!"; }
         }
 
@@ -606,15 +610,12 @@
             }
         }
 
+        // ZMIANA: Gdy przesuwamy mapę, wyłączamy podążanie (centrowanie), ale NIE ZMIENIAMY obrotu
         map.on('dragstart', () => { 
             if (isFollowingGPS) { 
                 isFollowingGPS = false; 
                 document.getElementById('center-btn').classList.remove('hidden'); 
                 updateAlertLift(); 
-                
-                const mapEl = document.getElementById('map');
-                mapEl.style.transition = 'none';
-                mapEl.style.transform = `translate(-50%, -50%) rotate(0deg)`;
             } 
         });
         
@@ -624,9 +625,6 @@
             updateAlertLift(); 
             if (lastKnownPosition) { 
                 map.panTo(lastKnownPosition); 
-                const mapEl = document.getElementById('map');
-                mapEl.style.transition = 'none';
-                mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
             } 
         }
 
@@ -634,7 +632,8 @@
             const btn = document.getElementById('track-btn');
             const mapEl = document.getElementById('map');
 
-            if (isFollowingGPS) {
+            if (isDriveModeActive) {
+                isDriveModeActive = false;
                 isFollowingGPS = false;
                 btn.innerText = "🚀 Wyruszam!"; 
                 btn.className = "btn-success"; 
@@ -643,7 +642,8 @@
                 updateAlertLift(); 
                 releaseWakeLock();
                 
-                mapEl.style.transition = 'none';
+                // ZMIANA: Po zatrzymaniu całkowitym trybu jazdy mapa wraca do Północy
+                mapEl.style.transition = 'transform 0.5s ease-out';
                 mapEl.style.transform = `translate(-50%, -50%) rotate(0deg)`;
             } else {
                 const routePoints = deliveryPoints.filter(p => p.status === 'pending');
@@ -653,6 +653,7 @@
                     if (!success) { btn.innerText = "🚀 Wyruszam!"; return; }
                 }
                 
+                isDriveModeActive = true;
                 isFollowingGPS = true;
                 btn.innerText = "⏹ Zatrzymaj podążanie"; 
                 btn.className = "btn-danger"; 
@@ -663,7 +664,8 @@
                 
                 if (lastKnownPosition) map.setView(lastKnownPosition, 16);
                 
-                mapEl.style.transition = 'none';
+                // ZMIANA: Zastosowanie obrotu przy rozpoczęciu jazdy
+                mapEl.style.transition = 'transform 0.5s ease-out';
                 mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
                 
                 const content = document.getElementById('ui-content');
@@ -686,7 +688,6 @@
                 (position) => {
                     const lat = position.coords.latitude; const lon = position.coords.longitude; 
                     
-                    // NOWOŚĆ: Logika z progiem prędkości (martwa strefa)
                     let speed = position.coords.speed;
                     let heading = position.coords.heading;
                     let distSinceLast = 0;
@@ -695,7 +696,6 @@
                         distSinceLast = map.distance([lat, lon], lastKnownPosition);
                     }
                     
-                    // Rotacja następuje tylko, jeśli jedziemy (ponad 0.8 m/s = ok 3 km/h) lub GPS skoczył o min. 5m
                     let isMoving = (speed !== null && speed > 0.8) || (distSinceLast > 5);
 
                     if (isMoving && lastKnownPosition) {
@@ -721,12 +721,15 @@
                         if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) recalculateRouteLine(); 
                     }
                     
-                    if (isFollowingGPS) { 
-                        map.panTo([lat, lon]); 
-                        
+                    // ZMIANA: Obrót mapy nakłada się ZAWSZE, gdy tryb jazdy jest aktywny (nawet podczas przesuwania palcem)
+                    if (isDriveModeActive) {
                         const mapEl = document.getElementById('map');
                         mapEl.style.transition = 'transform 0.5s ease-out';
                         mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
+                    }
+                    
+                    if (isFollowingGPS) { 
+                        map.panTo([lat, lon]); 
                         
                         if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) {
                             if (!lastRouteCalcPosition) { lastRouteCalcPosition = [lat, lon]; } 
