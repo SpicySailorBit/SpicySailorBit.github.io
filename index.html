@@ -10,7 +10,6 @@
     <style>
         body, html { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; overflow: hidden; background: #f8f9fa; }
         
-        /* NOWOŚĆ: Zmodyfikowana struktura mapy, by mogła się swobodnie i płynnie obracać pod interfejsem */
         #map { 
             width: 150vmax; height: 150vmax; z-index: 1; 
             position: absolute; top: 50%; left: 50%; 
@@ -211,7 +210,6 @@
         let lastKnownPosition = null;
         let isFirstGPSFix = true; 
         
-        // NOWOŚĆ: Zmienne do kontroli obrotu mapy
         let currentBearing = 0; 
         let lastRouteCalcPosition = null; 
         let priorityPointId = null;
@@ -234,7 +232,6 @@
             savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }];
         }
 
-        // NOWOŚĆ: Funkcja matematyczna do obliczania kierunku ruchu (heading) jako zapasowe źródło
         function getBearing(lat1, lon1, lat2, lon2) {
             const toRad = Math.PI / 180;
             const toDeg = 180 / Math.PI;
@@ -319,8 +316,10 @@
                 const li = document.createElement('li'); const shortName = point.name.split(',')[0];
                 let prefix = point.optLabel !== undefined ? `${point.optLabel}. ` : '- ';
                 let star = (point.id === priorityPointId) ? '⭐ ' : '';
+                
                 if (point.status === 'completed') { li.style.textDecoration = 'line-through'; li.style.color = 'red'; }
                 if (point.status === 'postponed') { li.style.color = '#d39e00'; }
+                
                 li.innerText = `${prefix}${star}${shortName}`; listElement.appendChild(li);
             });
         }
@@ -607,21 +606,18 @@
             }
         }
 
-        // ZMIANA: Dotknięcie mapy natychmiastowo wyłącza obrót (tzw. Tryb Przeglądania)
         map.on('dragstart', () => { 
             if (isFollowingGPS) { 
                 isFollowingGPS = false; 
                 document.getElementById('center-btn').classList.remove('hidden'); 
                 updateAlertLift(); 
                 
-                // Ustalenie mapy równo do północy dla łatwiejszego przesuwania
                 const mapEl = document.getElementById('map');
                 mapEl.style.transition = 'none';
                 mapEl.style.transform = `translate(-50%, -50%) rotate(0deg)`;
             } 
         });
         
-        // ZMIANA: Powrót do obrotu po kliknięciu Wyśrodkuj
         function recenterMap() { 
             isFollowingGPS = true; 
             document.getElementById('center-btn').classList.add('hidden'); 
@@ -647,7 +643,6 @@
                 updateAlertLift(); 
                 releaseWakeLock();
                 
-                // ZMIANA: Powrót widoku mapy do Północy
                 mapEl.style.transition = 'none';
                 mapEl.style.transform = `translate(-50%, -50%) rotate(0deg)`;
             } else {
@@ -668,7 +663,6 @@
                 
                 if (lastKnownPosition) map.setView(lastKnownPosition, 16);
                 
-                // ZMIANA: Powrót widoku mapy do trybu obracania kierowcy
                 mapEl.style.transition = 'none';
                 mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
                 
@@ -692,20 +686,31 @@
                 (position) => {
                     const lat = position.coords.latitude; const lon = position.coords.longitude; 
                     
-                    // ZMIANA: Wyciąganie oraz obliczanie kierunku (obrotu) jazdy
+                    // NOWOŚĆ: Logika z progiem prędkości (martwa strefa)
+                    let speed = position.coords.speed;
                     let heading = position.coords.heading;
-                    if (heading === null || isNaN(heading)) {
-                        if (lastKnownPosition) {
-                            const dist = map.distance([lat, lon], lastKnownPosition);
-                            if (dist > 3) { heading = getBearing(lastKnownPosition[0], lastKnownPosition[1], lat, lon); } 
-                            else { heading = currentBearing; }
-                        } else { heading = 0; }
+                    let distSinceLast = 0;
+                    
+                    if (lastKnownPosition) {
+                        distSinceLast = map.distance([lat, lon], lastKnownPosition);
                     }
-                    if (heading !== null && !isNaN(heading)) {
-                        let delta = heading - (currentBearing % 360);
-                        if (delta > 180) delta -= 360; if (delta < -180) delta += 360;
-                        currentBearing += delta;
+                    
+                    // Rotacja następuje tylko, jeśli jedziemy (ponad 0.8 m/s = ok 3 km/h) lub GPS skoczył o min. 5m
+                    let isMoving = (speed !== null && speed > 0.8) || (distSinceLast > 5);
+
+                    if (isMoving && lastKnownPosition) {
+                        if (heading === null || isNaN(heading)) {
+                            heading = getBearing(lastKnownPosition[0], lastKnownPosition[1], lat, lon);
+                        }
+                        
+                        if (heading !== null && !isNaN(heading)) {
+                            let delta = heading - (currentBearing % 360);
+                            if (delta > 180) delta -= 360; 
+                            if (delta < -180) delta += 360;
+                            currentBearing += delta;
+                        }
                     }
+                    
                     lastKnownPosition = [lat, lon];
                     
                     if (!courierMarker) { courierMarker = L.circleMarker([lat, lon], { color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8, pane: 'gpsPane' }).addTo(map); } 
@@ -719,7 +724,6 @@
                     if (isFollowingGPS) { 
                         map.panTo([lat, lon]); 
                         
-                        // ZMIANA: Zastosowanie wyliczonego obrotu z płynną animacją (transition)
                         const mapEl = document.getElementById('map');
                         mapEl.style.transition = 'transform 0.5s ease-out';
                         mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
