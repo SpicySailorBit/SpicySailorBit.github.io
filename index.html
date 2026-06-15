@@ -49,8 +49,6 @@
         }
         .custom-marker.zaliczony { background-color: #dc3545; } 
         .custom-marker.pozniej { background-color: #ffc107; color: #212529; } 
-        
-        /* NOWOŚĆ: Wygląd punktu priorytetowego na mapie */
         .custom-marker.priorytet { background-color: #fd7e14; border-color: #343a40; z-index: 1000 !important; }
 
         .group-details { background: #f1f3f5; padding: 5px; border-radius: 4px; border: 1px solid #dee2e6; margin-bottom: 8px; }
@@ -204,9 +202,10 @@
         let isFirstGPSFix = true; 
         
         let lastRouteCalcPosition = null; 
-        
-        // NOWOŚĆ: Zmienna trzymająca ID priorytetowego punktu
         let priorityPointId = null;
+        
+        // NOWOŚĆ: Zmienna do trzymania blokady ekranu (Wake Lock)
+        let wakeLock = null;
 
         let currentEditingType = null; 
         let currentEditingGroupId = null;
@@ -224,6 +223,37 @@
         } catch (e) {
             savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }];
         }
+
+        // NOWOŚĆ: Funkcja prosząca o blokadę wygaszania ekranu
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => {
+                        console.log('Blokada ekranu zwolniona.');
+                    });
+                    console.log('Blokada ekranu włączona.');
+                }
+            } catch (err) {
+                console.warn('Nie udało się włączyć blokady ekranu:', err.message);
+            }
+        }
+
+        // NOWOŚĆ: Funkcja zwalniająca blokadę wygaszania ekranu
+        function releaseWakeLock() {
+            if (wakeLock !== null) {
+                wakeLock.release().then(() => {
+                    wakeLock = null;
+                });
+            }
+        }
+
+        // NOWOŚĆ: Odnawianie blokady, jeśli użytkownik zminimalizował przeglądarkę i wrócił
+        document.addEventListener('visibilitychange', async () => {
+            if (document.visibilityState === 'visible' && isFollowingGPS) {
+                await requestWakeLock();
+            }
+        });
 
         function updateAlertLift() {
             const alertDiv = document.getElementById('proximity-alert');
@@ -277,13 +307,11 @@
             return true;
         }
 
-        // ZMIANA: Wyświetlanie gwiazdki przy punkcie priorytetowym na liście
         function updateListUI() {
             const listElement = document.getElementById('points-list'); listElement.innerHTML = ''; 
             deliveryPoints.forEach((point) => {
                 const li = document.createElement('li'); const shortName = point.name.split(',')[0];
                 let prefix = point.optLabel !== undefined ? `${point.optLabel}. ` : '- ';
-                
                 let star = (point.id === priorityPointId) ? '⭐ ' : '';
                 
                 if (point.status === 'completed') { li.style.textDecoration = 'line-through'; li.style.color = 'red'; }
@@ -430,14 +458,13 @@
 
         function saveGroupsToStorage() { localStorage.setItem('courierSavedGroups', JSON.stringify(savedGroups)); renderSavedAddresses(); }
 
-        // ZMIANA: Dodano przycisk "Priorytet" do Dymka i kolor markera
         function drawAllMarkers() {
             markersLayer.clearLayers();
             deliveryPoints.forEach((point) => {
                 let className = 'custom-marker'; 
                 if (point.status === 'completed') className += ' zaliczony'; 
                 else if (point.status === 'postponed') className += ' pozniej';
-                else if (point.id === priorityPointId) className += ' priorytet'; // Zmiana koloru dla priorytetu
+                else if (point.id === priorityPointId) className += ' priorytet'; 
                 
                 const customIcon = L.divIcon({ className: className, html: point.optLabel !== undefined ? point.optLabel : '', iconSize: [32, 32], iconAnchor: [16, 16] });
                 
@@ -466,11 +493,10 @@
             });
         }
 
-        // NOWOŚĆ: Funkcja aktywująca priorytet i wywołująca przeliczenie trasy
         window.setPriorityPoint = async function(id) {
             priorityPointId = id;
             const pt = deliveryPoints.find(p => p.id === id);
-            if(pt) pt.status = 'pending'; // Zawsze wznawiaj punkt, jeśli był odznaczony
+            if(pt) pt.status = 'pending'; 
             
             map.closePopup();
             
@@ -490,7 +516,6 @@
             const pt = deliveryPoints.find(p => p.id === id);
             if(pt) {
                 pt.status = newStatus; 
-                // ZMIANA: Wyłączenie flagi priorytetu, gdy punkt zostaje zaliczony/odłożony
                 if (id === priorityPointId && newStatus !== 'pending') {
                     priorityPointId = null; 
                 }
@@ -501,7 +526,6 @@
             }
         }
 
-        // ZMIANA: Genialna logika układania trasy z uwzględnieniem Priorytetu
         async function optimizeRoute() {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending'); 
             if (routePoints.length < 1) { return true; } 
@@ -520,12 +544,10 @@
 
             let coordsArray = [];
             
-            // JEŚLI MAMY PUNKT PRIORYTETOWY NA LIŚCIE PENDING:
             if (priorityPointId && routePoints.some(p => p.id === priorityPointId)) {
                 const prioPt = routePoints.find(p => p.id === priorityPointId);
                 const others = routePoints.filter(p => p.id !== priorityPointId);
                 
-                // Optymalizacja OSRM startuje z punktu priorytetowego
                 coordsArray.push(`${prioPt.lon},${prioPt.lat}`); 
                 others.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));
                 
@@ -534,9 +556,9 @@
                     const response = await fetch(osrmUrl);
                     const data = await response.json();
                     if (data.code === 'Ok') {
-                        prioPt.optLabel = 1; // Priorytet to zawsze punkt nr 1
+                        prioPt.optLabel = 1; 
                         others.forEach((point, index) => { 
-                            point.optLabel = data.waypoints[index + 1].waypoint_index + 1; // Pozostałe od 2 w górę
+                            point.optLabel = data.waypoints[index + 1].waypoint_index + 1; 
                         });
                         updateListUI(); drawAllMarkers();
                         await recalculateRouteLine(true);
@@ -544,7 +566,6 @@
                     } else { alert("Nie udało się przeliczyć priorytetu."); return false; }
                 } catch (error) { alert("Błąd połączenia."); return false; }
             } 
-            // NORMALNE ZACHOWANIE (Bez Priorytetu)
             else {
                 coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); 
                 routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));     
@@ -618,6 +639,9 @@
                 btn.style.backgroundColor = "#28a745";
                 document.getElementById('center-btn').classList.add('hidden'); 
                 updateAlertLift(); 
+                
+                // NOWOŚĆ: Zwolnienie blokady ekranu po zakończeniu jazdy
+                releaseWakeLock();
             } else {
                 const routePoints = deliveryPoints.filter(p => p.status === 'pending');
                 if (routePoints.length > 0) {
@@ -635,6 +659,9 @@
                 btn.style.backgroundColor = "#dc3545";
                 document.getElementById('center-btn').classList.add('hidden'); 
                 updateAlertLift();
+                
+                // NOWOŚĆ: Zażądanie blokady wygaszania ekranu przy rozpoczęciu jazdy
+                await requestWakeLock();
                 
                 if (lastKnownPosition) map.setView(lastKnownPosition, 16);
                 const content = document.getElementById('ui-content');
