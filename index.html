@@ -8,8 +8,14 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <style>
-        body, html { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; overflow: hidden; }
-        #map { width: 100%; height: 100vh; z-index: 1; }
+        body, html { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; overflow: hidden; background: #f8f9fa; }
+        
+        /* NOWOŚĆ: Zmodyfikowana struktura mapy, by mogła się swobodnie i płynnie obracać pod interfejsem */
+        #map { 
+            width: 150vmax; height: 150vmax; z-index: 1; 
+            position: absolute; top: 50%; left: 50%; 
+            transform: translate(-50%, -50%) rotate(0deg);
+        }
         
         #ui-panel {
             position: absolute; top: 10px; right: 10px; z-index: 1000;
@@ -190,6 +196,10 @@
         const map = L.map('map', { zoomControl: false }).setView([51.9194, 19.1451], 6);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
+        map.createPane('gpsPane');
+        map.getPane('gpsPane').style.zIndex = 650; 
+        map.getPane('gpsPane').style.pointerEvents = 'none'; 
+
         let deliveryPoints = [];
         let routeLayer = null; 
         let markersLayer = L.layerGroup().addTo(map);
@@ -201,10 +211,10 @@
         let lastKnownPosition = null;
         let isFirstGPSFix = true; 
         
+        // NOWOŚĆ: Zmienne do kontroli obrotu mapy
+        let currentBearing = 0; 
         let lastRouteCalcPosition = null; 
         let priorityPointId = null;
-        
-        // NOWOŚĆ: Zmienna do trzymania blokady ekranu (Wake Lock)
         let wakeLock = null;
 
         let currentEditingType = null; 
@@ -224,35 +234,31 @@
             savedGroups = [{ id: 'group_default', name: 'Ogólne', addresses: [] }];
         }
 
-        // NOWOŚĆ: Funkcja prosząca o blokadę wygaszania ekranu
+        // NOWOŚĆ: Funkcja matematyczna do obliczania kierunku ruchu (heading) jako zapasowe źródło
+        function getBearing(lat1, lon1, lat2, lon2) {
+            const toRad = Math.PI / 180;
+            const toDeg = 180 / Math.PI;
+            const dLon = (lon2 - lon1) * toRad;
+            const y = Math.sin(dLon) * Math.cos(lat2 * toRad);
+            const x = Math.cos(lat1 * toRad) * Math.sin(lat2 * toRad) - Math.sin(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.cos(dLon);
+            let brng = Math.atan2(y, x) * toDeg;
+            return (brng + 360) % 360;
+        }
+
         async function requestWakeLock() {
             try {
                 if ('wakeLock' in navigator) {
                     wakeLock = await navigator.wakeLock.request('screen');
-                    wakeLock.addEventListener('release', () => {
-                        console.log('Blokada ekranu zwolniona.');
-                    });
-                    console.log('Blokada ekranu włączona.');
                 }
-            } catch (err) {
-                console.warn('Nie udało się włączyć blokady ekranu:', err.message);
-            }
+            } catch (err) {}
         }
 
-        // NOWOŚĆ: Funkcja zwalniająca blokadę wygaszania ekranu
         function releaseWakeLock() {
-            if (wakeLock !== null) {
-                wakeLock.release().then(() => {
-                    wakeLock = null;
-                });
-            }
+            if (wakeLock !== null) { wakeLock.release().then(() => { wakeLock = null; }); }
         }
 
-        // NOWOŚĆ: Odnawianie blokady, jeśli użytkownik zminimalizował przeglądarkę i wrócił
         document.addEventListener('visibilitychange', async () => {
-            if (document.visibilityState === 'visible' && isFollowingGPS) {
-                await requestWakeLock();
-            }
+            if (document.visibilityState === 'visible' && isFollowingGPS) { await requestWakeLock(); }
         });
 
         function updateAlertLift() {
@@ -313,10 +319,8 @@
                 const li = document.createElement('li'); const shortName = point.name.split(',')[0];
                 let prefix = point.optLabel !== undefined ? `${point.optLabel}. ` : '- ';
                 let star = (point.id === priorityPointId) ? '⭐ ' : '';
-                
                 if (point.status === 'completed') { li.style.textDecoration = 'line-through'; li.style.color = 'red'; }
                 if (point.status === 'postponed') { li.style.color = '#d39e00'; }
-                
                 li.innerText = `${prefix}${star}${shortName}`; listElement.appendChild(li);
             });
         }
@@ -497,29 +501,21 @@
             priorityPointId = id;
             const pt = deliveryPoints.find(p => p.id === id);
             if(pt) pt.status = 'pending'; 
-            
             map.closePopup();
             
             const btn = document.getElementById('track-btn');
             btn.innerText = "⏳ Przeliczanie priorytetu..."; 
-            
             await optimizeRoute();
             
-            if (isFollowingGPS) {
-                btn.innerText = "⏹ Zatrzymaj podążanie";
-            } else {
-                btn.innerText = "🚀 Wyruszam!";
-            }
+            if (isFollowingGPS) { btn.innerText = "⏹ Zatrzymaj podążanie"; } 
+            else { btn.innerText = "🚀 Wyruszam!"; }
         }
 
         window.updatePointStatus = function(id, newStatus) {
             const pt = deliveryPoints.find(p => p.id === id);
             if(pt) {
                 pt.status = newStatus; 
-                if (id === priorityPointId && newStatus !== 'pending') {
-                    priorityPointId = null; 
-                }
-                
+                if (id === priorityPointId && newStatus !== 'pending') { priorityPointId = null; }
                 map.closePopup();
                 if(currentClosestId === id) { document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null; }
                 updateListUI(); drawAllMarkers(); recalculateRouteLine(false); 
@@ -530,10 +526,7 @@
             const routePoints = deliveryPoints.filter(p => p.status === 'pending'); 
             if (routePoints.length < 1) { return true; } 
 
-            if (!lastKnownPosition) {
-                alert("Oczekiwanie na sygnał GPS... Czerwona kropka musi być widoczna, aby wyznaczyć trasę.");
-                return false;
-            }
+            if (!lastKnownPosition) { alert("Oczekiwanie na sygnał GPS... Czerwona kropka musi być widoczna, aby wyznaczyć trasę."); return false; }
             
             if (routePoints.length === 1) {
                 routePoints[0].optLabel = 1;
@@ -553,16 +546,11 @@
                 
                 const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordsArray.join(';')}?source=first&roundtrip=false&overview=false`;
                 try {
-                    const response = await fetch(osrmUrl);
-                    const data = await response.json();
+                    const response = await fetch(osrmUrl); const data = await response.json();
                     if (data.code === 'Ok') {
                         prioPt.optLabel = 1; 
-                        others.forEach((point, index) => { 
-                            point.optLabel = data.waypoints[index + 1].waypoint_index + 1; 
-                        });
-                        updateListUI(); drawAllMarkers();
-                        await recalculateRouteLine(true);
-                        return true;
+                        others.forEach((point, index) => { point.optLabel = data.waypoints[index + 1].waypoint_index + 1; });
+                        updateListUI(); drawAllMarkers(); await recalculateRouteLine(true); return true;
                     } else { alert("Nie udało się przeliczyć priorytetu."); return false; }
                 } catch (error) { alert("Błąd połączenia."); return false; }
             } 
@@ -573,16 +561,10 @@
                 const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordsArray.join(';')}?source=first&roundtrip=false&overview=false`;
 
                 try {
-                    const response = await fetch(osrmUrl);
-                    const data = await response.json();
+                    const response = await fetch(osrmUrl); const data = await response.json();
                     if (data.code === 'Ok') {
-                        routePoints.forEach((point, index) => { 
-                            const optIndex = data.waypoints[index + 1].waypoint_index; 
-                            point.optLabel = optIndex; 
-                        });
-                        updateListUI(); drawAllMarkers();
-                        await recalculateRouteLine(true);
-                        return true;
+                        routePoints.forEach((point, index) => { const optIndex = data.waypoints[index + 1].waypoint_index; point.optLabel = optIndex; });
+                        updateListUI(); drawAllMarkers(); await recalculateRouteLine(true); return true;
                     } else { alert("Nie udało się wyznaczyć optymalnej trasy."); return false; }
                 } catch (error) { alert("Błąd połączenia."); return false; }
             }
@@ -611,9 +593,7 @@
                     updateRouteStats(data.routes[0].distance, data.routes[0].duration);
                     if (lastKnownPosition) lastRouteCalcPosition = [...lastKnownPosition];
                     
-                    if (fitBounds && !isFollowingGPS) {
-                        map.fitBounds(routeLayer.getBounds());
-                    }
+                    if (fitBounds && !isFollowingGPS) { map.fitBounds(routeLayer.getBounds()); }
                 }
             } catch (error) {}
         }
@@ -627,11 +607,37 @@
             }
         }
 
-        map.on('dragstart', () => { if (isFollowingGPS) { isFollowingGPS = false; document.getElementById('center-btn').classList.remove('hidden'); updateAlertLift(); } });
-        function recenterMap() { isFollowingGPS = true; document.getElementById('center-btn').classList.add('hidden'); updateAlertLift(); if (lastKnownPosition) { map.panTo(lastKnownPosition); } }
+        // ZMIANA: Dotknięcie mapy natychmiastowo wyłącza obrót (tzw. Tryb Przeglądania)
+        map.on('dragstart', () => { 
+            if (isFollowingGPS) { 
+                isFollowingGPS = false; 
+                document.getElementById('center-btn').classList.remove('hidden'); 
+                updateAlertLift(); 
+                
+                // Ustalenie mapy równo do północy dla łatwiejszego przesuwania
+                const mapEl = document.getElementById('map');
+                mapEl.style.transition = 'none';
+                mapEl.style.transform = `translate(-50%, -50%) rotate(0deg)`;
+            } 
+        });
+        
+        // ZMIANA: Powrót do obrotu po kliknięciu Wyśrodkuj
+        function recenterMap() { 
+            isFollowingGPS = true; 
+            document.getElementById('center-btn').classList.add('hidden'); 
+            updateAlertLift(); 
+            if (lastKnownPosition) { 
+                map.panTo(lastKnownPosition); 
+                const mapEl = document.getElementById('map');
+                mapEl.style.transition = 'none';
+                mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
+            } 
+        }
 
         async function toggleDriveMode() {
             const btn = document.getElementById('track-btn');
+            const mapEl = document.getElementById('map');
+
             if (isFollowingGPS) {
                 isFollowingGPS = false;
                 btn.innerText = "🚀 Wyruszam!"; 
@@ -639,18 +645,17 @@
                 btn.style.backgroundColor = "#28a745";
                 document.getElementById('center-btn').classList.add('hidden'); 
                 updateAlertLift(); 
-                
-                // NOWOŚĆ: Zwolnienie blokady ekranu po zakończeniu jazdy
                 releaseWakeLock();
+                
+                // ZMIANA: Powrót widoku mapy do Północy
+                mapEl.style.transition = 'none';
+                mapEl.style.transform = `translate(-50%, -50%) rotate(0deg)`;
             } else {
                 const routePoints = deliveryPoints.filter(p => p.status === 'pending');
                 if (routePoints.length > 0) {
                     btn.innerText = "⏳ Wyznaczam trasę..."; 
                     const success = await optimizeRoute();
-                    if (!success) {
-                        btn.innerText = "🚀 Wyruszam!";
-                        return; 
-                    }
+                    if (!success) { btn.innerText = "🚀 Wyruszam!"; return; }
                 }
                 
                 isFollowingGPS = true;
@@ -659,11 +664,14 @@
                 btn.style.backgroundColor = "#dc3545";
                 document.getElementById('center-btn').classList.add('hidden'); 
                 updateAlertLift();
-                
-                // NOWOŚĆ: Zażądanie blokady wygaszania ekranu przy rozpoczęciu jazdy
                 await requestWakeLock();
                 
                 if (lastKnownPosition) map.setView(lastKnownPosition, 16);
+                
+                // ZMIANA: Powrót widoku mapy do trybu obracania kierowcy
+                mapEl.style.transition = 'none';
+                mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
+                
                 const content = document.getElementById('ui-content');
                 if (!content.classList.contains('hidden')) { togglePanel(); }
             }
@@ -682,23 +690,46 @@
             if (!navigator.geolocation) { alert("Urządzenie nie obsługuje geolokalizacji."); return; }
             trackingId = navigator.geolocation.watchPosition(
                 (position) => {
-                    const lat = position.coords.latitude; const lon = position.coords.longitude; lastKnownPosition = [lat, lon];
-                    if (!courierMarker) { courierMarker = L.circleMarker([lat, lon], { color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8 }).addTo(map); } else { courierMarker.setLatLng([lat, lon]); }
+                    const lat = position.coords.latitude; const lon = position.coords.longitude; 
+                    
+                    // ZMIANA: Wyciąganie oraz obliczanie kierunku (obrotu) jazdy
+                    let heading = position.coords.heading;
+                    if (heading === null || isNaN(heading)) {
+                        if (lastKnownPosition) {
+                            const dist = map.distance([lat, lon], lastKnownPosition);
+                            if (dist > 3) { heading = getBearing(lastKnownPosition[0], lastKnownPosition[1], lat, lon); } 
+                            else { heading = currentBearing; }
+                        } else { heading = 0; }
+                    }
+                    if (heading !== null && !isNaN(heading)) {
+                        let delta = heading - (currentBearing % 360);
+                        if (delta > 180) delta -= 360; if (delta < -180) delta += 360;
+                        currentBearing += delta;
+                    }
+                    lastKnownPosition = [lat, lon];
+                    
+                    if (!courierMarker) { courierMarker = L.circleMarker([lat, lon], { color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8, pane: 'gpsPane' }).addTo(map); } 
+                    else { courierMarker.setLatLng([lat, lon]); }
                     
                     if (isFirstGPSFix) { 
                         map.setView([lat, lon], 16); isFirstGPSFix = false; 
                         if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) recalculateRouteLine(); 
                     }
+                    
                     if (isFollowingGPS) { 
                         map.panTo([lat, lon]); 
+                        
+                        // ZMIANA: Zastosowanie wyliczonego obrotu z płynną animacją (transition)
+                        const mapEl = document.getElementById('map');
+                        mapEl.style.transition = 'transform 0.5s ease-out';
+                        mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
+                        
                         if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) {
-                            if (!lastRouteCalcPosition) {
-                                lastRouteCalcPosition = [lat, lon];
-                            } else {
+                            if (!lastRouteCalcPosition) { lastRouteCalcPosition = [lat, lon]; } 
+                            else {
                                 const distMoved = map.distance([lat, lon], lastRouteCalcPosition);
-                                if (distMoved > 100) { 
-                                    lastRouteCalcPosition = [lat, lon];
-                                    recalculateRouteLine(false);
+                                if (distMoved > 40) { 
+                                    lastRouteCalcPosition = [lat, lon]; recalculateRouteLine(false);
                                 }
                             }
                         }
