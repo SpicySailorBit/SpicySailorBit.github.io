@@ -192,7 +192,8 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
-        const map = L.map('map', { zoomControl: false }).setView([51.9194, 19.1451], 6);
+        // ZMIANA: Dodano dragging: false do ustawień Leafleta, by przejąć pełną, zsynchronizowaną kontrolę nad przesuwaniem mapy
+        const map = L.map('map', { zoomControl: false, dragging: false, touchZoom: true }).setView([51.9194, 19.1451], 6);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
         map.createPane('gpsPane');
@@ -207,7 +208,6 @@
         let courierMarker = null;
         let currentClosestId = null; 
         
-        // NOWOŚĆ: Dwie flagi. isDriveModeActive oznacza "Wyruszam!" jest włączone, a isFollowingGPS odpowiada za centrowanie
         let isDriveModeActive = false;
         let isFollowingGPS = false; 
         
@@ -218,6 +218,10 @@
         let lastRouteCalcPosition = null; 
         let priorityPointId = null;
         let wakeLock = null;
+
+        // NOWOŚĆ: Zmienne pomocnicze dla naszego nowego silnika przesuwania (Custom Dragging Engine)
+        let isCustomDragging = false;
+        let dragStartX = 0, dragStartY = 0;
 
         let currentEditingType = null; 
         let currentEditingGroupId = null;
@@ -248,9 +252,7 @@
 
         async function requestWakeLock() {
             try {
-                if ('wakeLock' in navigator) {
-                    wakeLock = await navigator.wakeLock.request('screen');
-                }
+                if ('wakeLock' in navigator) { wakeLock = await navigator.wakeLock.request('screen'); }
             } catch (err) {}
         }
 
@@ -320,10 +322,8 @@
                 const li = document.createElement('li'); const shortName = point.name.split(',')[0];
                 let prefix = point.optLabel !== undefined ? `${point.optLabel}. ` : '- ';
                 let star = (point.id === priorityPointId) ? '⭐ ' : '';
-                
                 if (point.status === 'completed') { li.style.textDecoration = 'line-through'; li.style.color = 'red'; }
                 if (point.status === 'postponed') { li.style.color = '#d39e00'; }
-                
                 li.innerText = `${prefix}${star}${shortName}`; listElement.appendChild(li);
             });
         }
@@ -472,7 +472,6 @@
                 if (point.status === 'completed') className += ' zaliczony'; 
                 else if (point.status === 'postponed') className += ' pozniej';
                 else if (point.id === priorityPointId) className += ' priorytet'; 
-                
                 const customIcon = L.divIcon({ className: className, html: point.optLabel !== undefined ? point.optLabel : '', iconSize: [32, 32], iconAnchor: [16, 16] });
                 
                 const popupHtml = `
@@ -480,17 +479,13 @@
                         <b>Kolejność: ${point.optLabel !== undefined ? point.optLabel : 'Brak'}</b><br>
                         <strong style="font-size:14px; color:#222;">${point.name}</strong><br>
                         ${point.description ? `<div style="margin-top:4px; padding: 4px; background:#f8f9fa; border-left: 3px solid #17a2b8; font-style: italic; color: #555;">📝 ${point.description}</div>` : ''}
-                        
                         <div style="margin-top: 10px;">
                             <button class="btn-info" style="padding: 8px; font-size: 14px; margin-bottom: 8px; width: 100%; background-color: #17a2b8;" onclick="setPriorityPoint(${point.id})">⭐ Priorytet</button>
-                            
                             ${point.status === 'pending' ? `
                             <button class="btn-danger" style="padding: 5px; margin-bottom: 5px;" onclick="updatePointStatus(${point.id}, 'completed')">✔️ Zaliczony</button>
                             <button class="btn-warning" style="padding: 5px; margin-bottom: 0;" onclick="updatePointStatus(${point.id}, 'postponed')">🕒 Później</button>
                             ` : `
-                            <div style="margin-bottom: 5px; color: ${point.status === 'completed' ? 'red' : '#d39e00'}; font-weight: bold; text-align: center;">
-                                Status: ${point.status === 'completed' ? 'Zaliczony' : 'Zostawiony na później'}
-                            </div>
+                            <div style="margin-bottom: 5px; color: ${point.status === 'completed' ? 'red' : '#d39e00'}; font-weight: bold; text-align: center;">Status: ${point.status === 'completed' ? 'Zaliczony' : 'Zostawiony na później'}</div>
                             <button style="padding: 5px; margin-top: 0; background: #6c757d; color: white;" onclick="updatePointStatus(${point.id}, 'pending')">Cofnij zmianę</button>
                             `}
                         </div>
@@ -501,68 +496,42 @@
         }
 
         window.setPriorityPoint = async function(id) {
-            priorityPointId = id;
-            const pt = deliveryPoints.find(p => p.id === id);
-            if(pt) pt.status = 'pending'; 
-            map.closePopup();
-            
-            const btn = document.getElementById('track-btn');
-            btn.innerText = "⏳ Przeliczanie priorytetu..."; 
+            priorityPointId = id; const pt = deliveryPoints.find(p => p.id === id); if(pt) pt.status = 'pending'; map.closePopup();
+            const btn = document.getElementById('track-btn'); btn.innerText = "⏳ Przeliczanie priorytetu..."; 
             await optimizeRoute();
-            
-            if (isDriveModeActive) { btn.innerText = "⏹ Zatrzymaj podążanie"; } 
-            else { btn.innerText = "🚀 Wyruszam!"; }
+            if (isDriveModeActive) { btn.innerText = "⏹ Zatrzymaj podążanie"; } else { btn.innerText = "🚀 Wyruszam!"; }
         }
 
         window.updatePointStatus = function(id, newStatus) {
             const pt = deliveryPoints.find(p => p.id === id);
             if(pt) {
-                pt.status = newStatus; 
-                if (id === priorityPointId && newStatus !== 'pending') { priorityPointId = null; }
-                map.closePopup();
-                if(currentClosestId === id) { document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null; }
+                pt.status = newStatus; if (id === priorityPointId && newStatus !== 'pending') { priorityPointId = null; }
+                map.closePopup(); if(currentClosestId === id) { document.getElementById('proximity-alert').classList.add('hidden'); currentClosestId = null; }
                 updateListUI(); drawAllMarkers(); recalculateRouteLine(false); 
             }
         }
 
         async function optimizeRoute() {
-            const routePoints = deliveryPoints.filter(p => p.status === 'pending'); 
-            if (routePoints.length < 1) { return true; } 
-
+            const routePoints = deliveryPoints.filter(p => p.status === 'pending'); if (routePoints.length < 1) { return true; } 
             if (!lastKnownPosition) { alert("Oczekiwanie na sygnał GPS... Czerwona kropka musi być widoczna, aby wyznaczyć trasę."); return false; }
-            
             if (routePoints.length === 1) {
-                routePoints[0].optLabel = 1;
-                updateListUI(); drawAllMarkers();
-                await recalculateRouteLine(true); 
-                return true;
+                routePoints[0].optLabel = 1; updateListUI(); drawAllMarkers(); await recalculateRouteLine(true); return true;
             }
-
             let coordsArray = [];
-            
             if (priorityPointId && routePoints.some(p => p.id === priorityPointId)) {
-                const prioPt = routePoints.find(p => p.id === priorityPointId);
-                const others = routePoints.filter(p => p.id !== priorityPointId);
-                
-                coordsArray.push(`${prioPt.lon},${prioPt.lat}`); 
-                others.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));
-                
+                const prioPt = routePoints.find(p => p.id === priorityPointId); const others = routePoints.filter(p => p.id !== priorityPointId);
+                coordsArray.push(`${prioPt.lon},${prioPt.lat}`); others.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));
                 const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordsArray.join(';')}?source=first&roundtrip=false&overview=false`;
                 try {
                     const response = await fetch(osrmUrl); const data = await response.json();
                     if (data.code === 'Ok') {
-                        prioPt.optLabel = 1; 
-                        others.forEach((point, index) => { point.optLabel = data.waypoints[index + 1].waypoint_index + 1; });
+                        prioPt.optLabel = 1; others.forEach((point, index) => { point.optLabel = data.waypoints[index + 1].waypoint_index + 1; });
                         updateListUI(); drawAllMarkers(); await recalculateRouteLine(true); return true;
                     } else { alert("Nie udało się przeliczyć priorytetu."); return false; }
                 } catch (error) { alert("Błąd połączenia."); return false; }
-            } 
-            else {
-                coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); 
-                routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));     
-
+            } else {
+                coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));     
                 const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordsArray.join(';')}?source=first&roundtrip=false&overview=false`;
-
                 try {
                     const response = await fetch(osrmUrl); const data = await response.json();
                     if (data.code === 'Ok') {
@@ -576,17 +545,8 @@
         async function recalculateRouteLine(fitBounds = false) {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending');
             routePoints.sort((a, b) => { return (a.optLabel !== undefined ? a.optLabel : 999) - (b.optLabel !== undefined ? b.optLabel : 999); });
-            
-            let coordsArray = []; 
-            if (lastKnownPosition) coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); 
-            routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`)); 
-
-            if (coordsArray.length < 2) { 
-                if (routeLayer) map.removeLayer(routeLayer); 
-                document.getElementById('route-stats').classList.add('hidden'); 
-                return; 
-            }
-
+            let coordsArray = []; if (lastKnownPosition) coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`)); 
+            if (coordsArray.length < 2) { if (routeLayer) map.removeLayer(routeLayer); document.getElementById('route-stats').classList.add('hidden'); return; }
             try {
                 const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordsArray.join(';')}?overview=full&geometries=geojson`);
                 const data = await response.json();
@@ -595,7 +555,6 @@
                     routeLayer = L.geoJSON(data.routes[0].geometry, { style: { color: '#007bff', weight: 5, opacity: 0.7 } }).addTo(map);
                     updateRouteStats(data.routes[0].distance, data.routes[0].duration);
                     if (lastKnownPosition) lastRouteCalcPosition = [...lastKnownPosition];
-                    
                     if (fitBounds && !isFollowingGPS) { map.fitBounds(routeLayer.getBounds()); }
                 }
             } catch (error) {}
@@ -610,73 +569,106 @@
             }
         }
 
-        // ZMIANA: Gdy przesuwamy mapę, wyłączamy podążanie (centrowanie), ale NIE ZMIENIAMY obrotu
-        map.on('dragstart', () => { 
-            if (isFollowingGPS) { 
-                isFollowingGPS = false; 
-                document.getElementById('center-btn').classList.remove('hidden'); 
-                updateAlertLift(); 
-            } 
-        });
+        // NOWOŚĆ: Logika wyłączania automatycznego śledzenia kamery po dotknięciu/przesunięciu mapy przez użytkownika
+        function handleUserMapInteraction() {
+            if (isFollowingGPS) {
+                isFollowingGPS = false;
+                document.getElementById('center-btn').classList.remove('hidden');
+                updateAlertLift();
+            }
+        }
+
+        // NOWOŚĆ: Kompleksowy Silnik Przesuwania Mapy (Custom Dragging Engine) zsynchronizowany z obrotem 360°
+        function initCustomDragging() {
+            const mapDiv = document.getElementById('map');
+
+            // 1. Obsługa dla Myszki (Komputery / Testy)
+            mapDiv.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return; // Tylko lewy przycisk myszy
+                isCustomDragging = true;
+                dragStartX = e.clientX;
+                dragStartY = e.clientY;
+                handleUserMapInteraction();
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (!isCustomDragging) return;
+                
+                let screenDx = e.clientX - dragStartX;
+                let screenDy = e.clientY - dragStartY;
+
+                // MAGIA: Rotacja wektora przesunięcia o aktualny kąt jazdy za pomocą trygonometrii
+                let angleRad = currentBearing * Math.PI / 180;
+                let mapDx = screenDx * Math.cos(angleRad) - screenDy * Math.sin(angleRad);
+                let mapDy = screenDx * Math.sin(angleRad) + screenDy * Math.cos(angleRad);
+
+                map.panBy([-mapDx, -mapDy], { animate: false });
+
+                dragStartX = e.clientX;
+                dragStartY = e.clientY;
+            });
+
+            window.addEventListener('mouseup', () => { isCustomDragging = false; });
+
+            // 2. Obsługa dla Palca (Ekrany dotykowe smartfonów)
+            mapDiv.addEventListener('touchstart', (e) => {
+                if (e.touches.length > 1) return; // Pozwól Leafletowi obsłużyć pinch-zoom (przybliżanie dwoma palcami)
+                isCustomDragging = true;
+                dragStartX = e.touches[0].clientX;
+                dragStartY = e.touches[0].clientY;
+                handleUserMapInteraction();
+            });
+
+            window.addEventListener('touchmove', (e) => {
+                if (!isCustomDragging) return;
+                if (e.touches.length > 1) { isCustomDragging = false; return; } // Przerywamy ruch jeśli dojdzie drugi palec
+
+                if (e.cancelable) e.preventDefault(); // Blokujemy przeskakiwanie/bouncowanie całej strony w smartfonie
+
+                let screenDx = e.touches[0].clientX - dragStartX;
+                let screenDy = e.touches[0].clientY - dragStartY;
+
+                // Tłumaczenie ruchu palca na obróconą mapę
+                let angleRad = currentBearing * Math.PI / 180;
+                let mapDx = screenDx * Math.cos(angleRad) - screenDy * Math.sin(angleRad);
+                let mapDy = screenDx * Math.sin(angleRad) + screenDy * Math.cos(angleRad);
+
+                map.panBy([-mapDx, -mapDy], { animate: false });
+
+                dragStartX = e.touches[0].clientX;
+                dragStartY = e.touches[0].clientY;
+            }, { passive: false });
+
+            window.addEventListener('touchend', () => { isCustomDragging = false; });
+        }
         
         function recenterMap() { 
-            isFollowingGPS = true; 
-            document.getElementById('center-btn').classList.add('hidden'); 
-            updateAlertLift(); 
-            if (lastKnownPosition) { 
-                map.panTo(lastKnownPosition); 
-            } 
+            isFollowingGPS = true; document.getElementById('center-btn').classList.add('hidden'); updateAlertLift(); 
+            if (lastKnownPosition) { map.panTo(lastKnownPosition); } 
         }
 
         async function toggleDriveMode() {
-            const btn = document.getElementById('track-btn');
-            const mapEl = document.getElementById('map');
-
+            const btn = document.getElementById('track-btn'); const mapEl = document.getElementById('map');
             if (isDriveModeActive) {
-                isDriveModeActive = false;
-                isFollowingGPS = false;
-                btn.innerText = "🚀 Wyruszam!"; 
-                btn.className = "btn-success"; 
-                btn.style.backgroundColor = "#28a745";
-                document.getElementById('center-btn').classList.add('hidden'); 
-                updateAlertLift(); 
-                releaseWakeLock();
-                
-                // ZMIANA: Po zatrzymaniu całkowitym trybu jazdy mapa wraca do Północy
-                mapEl.style.transition = 'transform 0.5s ease-out';
-                mapEl.style.transform = `translate(-50%, -50%) rotate(0deg)`;
+                isDriveModeActive = false; isFollowingGPS = false; btn.innerText = "🚀 Wyruszam!"; btn.className = "btn-success"; btn.style.backgroundColor = "#28a745";
+                document.getElementById('center-btn').classList.add('hidden'); updateAlertLift(); releaseWakeLock();
+                mapEl.style.transition = 'transform 0.5s ease-out'; mapEl.style.transform = `translate(-50%, -50%) rotate(0deg)`;
             } else {
                 const routePoints = deliveryPoints.filter(p => p.status === 'pending');
                 if (routePoints.length > 0) {
-                    btn.innerText = "⏳ Wyznaczam trasę..."; 
-                    const success = await optimizeRoute();
-                    if (!success) { btn.innerText = "🚀 Wyruszam!"; return; }
+                    btn.innerText = "⏳ Wyznaczam trasę..."; const success = await optimizeRoute(); if (!success) { btn.innerText = "🚀 Wyruszam!"; return; }
                 }
-                
-                isDriveModeActive = true;
-                isFollowingGPS = true;
-                btn.innerText = "⏹ Zatrzymaj podążanie"; 
-                btn.className = "btn-danger"; 
-                btn.style.backgroundColor = "#dc3545";
-                document.getElementById('center-btn').classList.add('hidden'); 
-                updateAlertLift();
-                await requestWakeLock();
-                
+                isDriveModeActive = true; isFollowingGPS = true; btn.innerText = "⏹ Zatrzymaj podążanie"; btn.className = "btn-danger"; btn.style.backgroundColor = "#dc3545";
+                document.getElementById('center-btn').classList.add('hidden'); updateAlertLift(); await requestWakeLock();
                 if (lastKnownPosition) map.setView(lastKnownPosition, 16);
-                
-                // ZMIANA: Zastosowanie obrotu przy rozpoczęciu jazdy
-                mapEl.style.transition = 'transform 0.5s ease-out';
-                mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
-                
-                const content = document.getElementById('ui-content');
-                if (!content.classList.contains('hidden')) { togglePanel(); }
+                mapEl.style.transition = 'transform 0.5s ease-out'; mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
+                const content = document.getElementById('ui-content'); if (!content.classList.contains('hidden')) { togglePanel(); }
             }
         }
 
         function openActionModal(pointId) {
             const pt = deliveryPoints.find(p => p.id === pointId); if (!pt) return;
-            currentActionPointId = pointId; document.getElementById('action-modal-address').innerText = pt.name;
-            document.getElementById('action-modal-overlay').classList.remove('hidden');
+            currentActionPointId = pointId; document.getElementById('action-modal-address').innerText = pt.name; document.getElementById('action-modal-overlay').classList.remove('hidden');
         }
 
         closeActionModal = function() { document.getElementById('action-modal-overlay').classList.add('hidden'); currentActionPointId = null; }
@@ -687,30 +679,18 @@
             trackingId = navigator.geolocation.watchPosition(
                 (position) => {
                     const lat = position.coords.latitude; const lon = position.coords.longitude; 
-                    
-                    let speed = position.coords.speed;
-                    let heading = position.coords.heading;
-                    let distSinceLast = 0;
-                    
-                    if (lastKnownPosition) {
-                        distSinceLast = map.distance([lat, lon], lastKnownPosition);
-                    }
-                    
+                    let speed = position.coords.speed; let heading = position.coords.heading; let distSinceLast = 0;
+                    if (lastKnownPosition) { distSinceLast = map.distance([lat, lon], lastKnownPosition); }
                     let isMoving = (speed !== null && speed > 0.8) || (distSinceLast > 5);
 
                     if (isMoving && lastKnownPosition) {
-                        if (heading === null || isNaN(heading)) {
-                            heading = getBearing(lastKnownPosition[0], lastKnownPosition[1], lat, lon);
-                        }
-                        
+                        if (heading === null || isNaN(heading)) { heading = getBearing(lastKnownPosition[0], lastKnownPosition[1], lat, lon); }
                         if (heading !== null && !isNaN(heading)) {
                             let delta = heading - (currentBearing % 360);
-                            if (delta > 180) delta -= 360; 
-                            if (delta < -180) delta += 360;
+                            if (delta > 180) delta -= 360; if (delta < -180) delta += 360;
                             currentBearing += delta;
                         }
                     }
-                    
                     lastKnownPosition = [lat, lon];
                     
                     if (!courierMarker) { courierMarker = L.circleMarker([lat, lon], { color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8, pane: 'gpsPane' }).addTo(map); } 
@@ -721,7 +701,6 @@
                         if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) recalculateRouteLine(); 
                     }
                     
-                    // ZMIANA: Obrót mapy nakłada się ZAWSZE, gdy tryb jazdy jest aktywny (nawet podczas przesuwania palcem)
                     if (isDriveModeActive) {
                         const mapEl = document.getElementById('map');
                         mapEl.style.transition = 'transform 0.5s ease-out';
@@ -730,14 +709,11 @@
                     
                     if (isFollowingGPS) { 
                         map.panTo([lat, lon]); 
-                        
                         if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) {
                             if (!lastRouteCalcPosition) { lastRouteCalcPosition = [lat, lon]; } 
                             else {
                                 const distMoved = map.distance([lat, lon], lastRouteCalcPosition);
-                                if (distMoved > 40) { 
-                                    lastRouteCalcPosition = [lat, lon]; recalculateRouteLine(false);
-                                }
+                                if (distMoved > 40) { lastRouteCalcPosition = [lat, lon]; recalculateRouteLine(false); }
                             }
                         }
                     }
@@ -751,8 +727,7 @@
                         if (currentClosestId !== closestPoint.id) {
                             alertDiv.innerHTML = `📍 Cel blisko (<span id="prox-dist">${Math.round(minDistance)}</span>m)<br><small>${shortAddr}</small>`;
                             alertDiv.onclick = function() { openActionModal(closestPoint.id); };
-                            alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id;
-                            updateAlertLift(); 
+                            alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id; updateAlertLift(); 
                         } else { const distSpan = document.getElementById('prox-dist'); if (distSpan) distSpan.innerText = Math.round(minDistance); }
                     } else { alertDiv.classList.add('hidden'); currentClosestId = null; }
                 },
@@ -762,6 +737,7 @@
         }
 
         renderSavedAddresses();
+        initCustomDragging(); // NOWOŚĆ: Uruchomienie autorskiego systemu sterowania mapą
         initAutomaticGPS();
     </script>
 </body>
