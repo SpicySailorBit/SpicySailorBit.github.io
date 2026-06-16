@@ -14,7 +14,6 @@
             width: 150vmax; height: 150vmax; z-index: 1; 
             position: absolute; top: 50%; left: 50%; 
             transform: translate(-50%, -50%) rotate(0deg);
-            /* ZMIANA: Dotyk całkowicie na sztywno, zapobiega odświeżaniu i przewijaniu strony na smartfonach */
             touch-action: none; 
         }
         
@@ -194,7 +193,6 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
-        // Mamy włączone touchZoom (szczypanie mapy dwoma palcami), ale przesuwanie 1 palcem przejmujemy ręcznie
         const map = L.map('map', { zoomControl: false, dragging: false, touchZoom: true }).setView([51.9194, 19.1451], 6);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
@@ -221,9 +219,10 @@
         let priorityPointId = null;
         let wakeLock = null;
 
-        // Silnik dotyku:
+        // NOWOŚĆ: Zmienne zabezpieczające przed dryfowaniem mapy (Absolute Anchor)
         let isCustomDragging = false;
-        let dragStartX = 0, dragStartY = 0;
+        let dragStartClientX = 0, dragStartClientY = 0;
+        let dragStartCenter = null; 
 
         let currentEditingType = null; 
         let currentEditingGroupId = null;
@@ -570,7 +569,6 @@
             }
         }
 
-        // ZMIANA: Obsługa odsunięcia kamery (odklejenia GPS) - bez niszczenia rotacji!
         function handleUserMapInteraction() {
             if (isFollowingGPS) {
                 isFollowingGPS = false;
@@ -579,29 +577,27 @@
             }
         }
 
-        // NOWOŚĆ: Zaawansowany i ciągły silnik dotyku używający Pointer Events
+        // NOWOŚĆ: Idealnie płynny, oparty o kotwicę (Absolute Anchor) silnik dotyku mapy
         function initCustomDragging() {
             const mapDiv = document.getElementById('map');
             let activePointers = new Map();
 
             mapDiv.addEventListener('pointerdown', (e) => {
-                // Pozwalamy na dotyk palcem lub lewym przyciskiem myszy
                 if (e.pointerType === 'mouse' && e.button !== 0) return;
                 
-                // Rejestrujemy palec
                 activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
                 
-                // Jeśli to pierwszy i jedyny palec, aktywujemy swobodne przesuwanie
                 if (activePointers.size === 1) {
                     isCustomDragging = true;
-                    dragStartX = e.clientX;
-                    dragStartY = e.clientY;
+                    dragStartClientX = e.clientX;
+                    dragStartClientY = e.clientY;
                     
-                    // KRADNIEMY WSKAŹNIK (Zapewnia ciągłość pracy nawet po zjechaniu palca)
+                    // ZAPISUJEMY WIRTUALNĄ SZPILKĘ (Kotwicę absolutną) na aktualnym środku mapy
+                    dragStartCenter = map.getCenter(); 
+                    
                     mapDiv.setPointerCapture(e.pointerId);
                     handleUserMapInteraction();
                 } else {
-                    // Jeśli użytkownik kładzie 2 palce (do zooma), puszczamy blokadę przesuwania 
                     isCustomDragging = false; 
                 }
             });
@@ -611,35 +607,38 @@
                     activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
                 }
 
-                // Przerywamy jeśli nie jesteśmy w trybie dragu albo używamy wielu palców
-                if (!isCustomDragging || activePointers.size !== 1) return;
+                if (!isCustomDragging || activePointers.size !== 1 || !dragStartCenter) return;
                 e.preventDefault();
 
-                let screenDx = e.clientX - dragStartX;
-                let screenDy = e.clientY - dragStartY;
+                // Obliczamy ile pikseli na ekranie przesunął się palec od MOMENTU DOTKNIĘCIA (nie od ostatniej klatki!)
+                let screenDx = e.clientX - dragStartClientX;
+                let screenDy = e.clientY - dragStartClientY;
 
-                // TRYGONOMETRIA: Obrót współrzędnych palca, by zgadzały się z obrotem kamery CSS
                 let angleRad = currentBearing * Math.PI / 180;
+                
+                // Matematyczne odwrócenie wektora zgodnie z obrotem mapy
                 let mapDx = screenDx * Math.cos(angleRad) - screenDy * Math.sin(angleRad);
                 let mapDy = screenDx * Math.sin(angleRad) + screenDy * Math.cos(angleRad);
 
-                map.panBy([-mapDx, -mapDy], { animate: false });
-
-                dragStartX = e.clientX;
-                dragStartY = e.clientY;
+                // Fizycznie zmieniamy środek mapy względem punktu zaczepienia (szpilki)
+                let centerPoint = map.project(dragStartCenter, map.getZoom());
+                centerPoint.x -= mapDx;
+                centerPoint.y -= mapDy;
+                
+                // Błyskawicznie przerysowujemy mapę bez wyliczania i gubienia ułamków
+                map.setView(map.unproject(centerPoint, map.getZoom()), map.getZoom(), { animate: false });
             });
 
-            // Funkcja czyszcząca sesję palca, wywoływana przy końcu lub awarii dotyku
             function endPointer(e) {
                 activePointers.delete(e.pointerId);
                 try { mapDiv.releasePointerCapture(e.pointerId); } catch(err) {}
                 
                 if (activePointers.size === 1) {
-                    // Jeśli puściliśmy jeden z dwóch palców, płynnie wznów przesuwanie mapy dla pozostałego
                     isCustomDragging = true;
                     let remaining = Array.from(activePointers.values())[0];
-                    dragStartX = remaining.x;
-                    dragStartY = remaining.y;
+                    dragStartClientX = remaining.x;
+                    dragStartClientY = remaining.y;
+                    dragStartCenter = map.getCenter(); // Resetujemy szpilkę dla drugiego palca
                 } else {
                     isCustomDragging = false;
                 }
@@ -661,7 +660,6 @@
             const mapEl = document.getElementById('map');
 
             if (isDriveModeActive) {
-                // Wyłączamy CAŁKOWICIE tryb jazdy - wtedy i tylko wtedy odwracamy mapę do pionu
                 isDriveModeActive = false;
                 isFollowingGPS = false;
                 btn.innerText = "🚀 Wyruszam!"; 
@@ -674,7 +672,6 @@
                 mapEl.style.transition = 'transform 0.5s ease-out';
                 mapEl.style.transform = `translate(-50%, -50%) rotate(0deg)`;
             } else {
-                // Rozpoczynamy jazdę
                 const routePoints = deliveryPoints.filter(p => p.status === 'pending');
                 if (routePoints.length > 0) {
                     btn.innerText = "⏳ Wyznaczam trasę..."; 
@@ -788,8 +785,6 @@
         }
 
         renderSavedAddresses();
-        
-        // Inicjalizacja nowych systemów
         initCustomDragging(); 
         initAutomaticGPS();
     </script>
