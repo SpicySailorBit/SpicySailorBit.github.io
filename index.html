@@ -14,7 +14,10 @@
             width: 150vmax; height: 150vmax; z-index: 1; 
             position: absolute; top: 50%; left: 50%; 
             transform: translate(-50%, -50%) rotate(0deg);
+            /* ZMIANY: Wymuszenie płynności przez GPU i blokada domyślnego przewijania przeglądarki */
             touch-action: none; 
+            overscroll-behavior: none;
+            will-change: transform;
         }
         
         #ui-panel {
@@ -219,10 +222,11 @@
         let priorityPointId = null;
         let wakeLock = null;
 
-        // NOWOŚĆ: Zmienne zabezpieczające przed dryfowaniem mapy (Absolute Anchor)
+        // NOWOŚĆ: Wydajne zmienne akumulatora przesuwania (bez gubienia pamięci i bez klatkowania)
         let isCustomDragging = false;
-        let dragStartClientX = 0, dragStartClientY = 0;
-        let dragStartCenter = null; 
+        let dragStartX = 0, dragStartY = 0;
+        let accumMapDx = 0, accumMapDy = 0;
+        let dragRAF = null;
 
         let currentEditingType = null; 
         let currentEditingGroupId = null;
@@ -577,7 +581,7 @@
             }
         }
 
-        // NOWOŚĆ: Idealnie płynny, oparty o kotwicę (Absolute Anchor) silnik dotyku mapy
+        // ZMIANA: Totalnie przebudowany, zoptymalizowany dla GPU silnik przesuwania dotykiem (Akumulator Pikseli)
         function initCustomDragging() {
             const mapDiv = document.getElementById('map');
             let activePointers = new Map();
@@ -589,11 +593,10 @@
                 
                 if (activePointers.size === 1) {
                     isCustomDragging = true;
-                    dragStartClientX = e.clientX;
-                    dragStartClientY = e.clientY;
-                    
-                    // ZAPISUJEMY WIRTUALNĄ SZPILKĘ (Kotwicę absolutną) na aktualnym środku mapy
-                    dragStartCenter = map.getCenter(); 
+                    dragStartX = e.clientX;
+                    dragStartY = e.clientY;
+                    accumMapDx = 0;
+                    accumMapDy = 0;
                     
                     mapDiv.setPointerCapture(e.pointerId);
                     handleUserMapInteraction();
@@ -607,26 +610,39 @@
                     activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
                 }
 
-                if (!isCustomDragging || activePointers.size !== 1 || !dragStartCenter) return;
+                if (!isCustomDragging || activePointers.size !== 1) return;
                 e.preventDefault();
 
-                // Obliczamy ile pikseli na ekranie przesunął się palec od MOMENTU DOTKNIĘCIA (nie od ostatniej klatki!)
-                let screenDx = e.clientX - dragStartClientX;
-                let screenDy = e.clientY - dragStartClientY;
+                let screenDx = e.clientX - dragStartX;
+                let screenDy = e.clientY - dragStartY;
+                
+                dragStartX = e.clientX;
+                dragStartY = e.clientY;
 
                 let angleRad = currentBearing * Math.PI / 180;
                 
-                // Matematyczne odwrócenie wektora zgodnie z obrotem mapy
+                // Rotacja przesuwania o aktualny obrót mapy
                 let mapDx = screenDx * Math.cos(angleRad) - screenDy * Math.sin(angleRad);
                 let mapDy = screenDx * Math.sin(angleRad) + screenDy * Math.cos(angleRad);
 
-                // Fizycznie zmieniamy środek mapy względem punktu zaczepienia (szpilki)
-                let centerPoint = map.project(dragStartCenter, map.getZoom());
-                centerPoint.x -= mapDx;
-                centerPoint.y -= mapDy;
-                
-                // Błyskawicznie przerysowujemy mapę bez wyliczania i gubienia ułamków
-                map.setView(map.unproject(centerPoint, map.getZoom()), map.getZoom(), { animate: false });
+                accumMapDx += mapDx;
+                accumMapDy += mapDy;
+
+                // Używamy TYLKO całkowitych pikseli (Leaflet optymalizuje to sprzętowo w CSS)
+                let moveX = Math.round(accumMapDx);
+                let moveY = Math.round(accumMapDy);
+
+                if (moveX !== 0 || moveY !== 0) {
+                    accumMapDx -= moveX;
+                    accumMapDy -= moveY;
+                    
+                    if (!dragRAF) {
+                        dragRAF = requestAnimationFrame(() => {
+                            map.panBy([-moveX, -moveY], { animate: false });
+                            dragRAF = null;
+                        });
+                    }
+                }
             });
 
             function endPointer(e) {
@@ -636,11 +652,13 @@
                 if (activePointers.size === 1) {
                     isCustomDragging = true;
                     let remaining = Array.from(activePointers.values())[0];
-                    dragStartClientX = remaining.x;
-                    dragStartClientY = remaining.y;
-                    dragStartCenter = map.getCenter(); // Resetujemy szpilkę dla drugiego palca
+                    dragStartX = remaining.x;
+                    dragStartY = remaining.y;
+                    accumMapDx = 0;
+                    accumMapDy = 0;
                 } else {
                     isCustomDragging = false;
+                    if (dragRAF) { cancelAnimationFrame(dragRAF); dragRAF = null; }
                 }
             }
 
