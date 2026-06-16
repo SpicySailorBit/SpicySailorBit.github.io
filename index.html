@@ -10,13 +10,18 @@
     <style>
         body, html { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; overflow: hidden; background: #f8f9fa; }
         
-        #map { 
-            width: 150vmax; height: 150vmax; z-index: 1; 
-            position: absolute; top: 50%; left: 50%; 
-            transform: translate(-50%, -50%) rotate(0deg);
-            touch-action: none; 
-            overscroll-behavior: none;
+        /* ZMIANA: Dodany specjalny kontener-rodzic, który odpowiada za płynny obrót całego świata mapy */
+        #map-container {
+            width: 100%; height: 100vh; position: absolute; top: 0; left: 0; overflow: hidden;
+            transform: rotate(0deg);
             will-change: transform;
+        }
+
+        /* Mapa jest teraz większa niż ekran, by podczas obrotów o 360 stopni nigdzie nie było widać białych rogów */
+        #map { 
+            width: 180vmax; height: 180vmax; z-index: 1; 
+            position: absolute; top: 50%; left: 50%; 
+            transform: translate(-50%, -50%);
         }
         
         #ui-panel {
@@ -190,12 +195,15 @@
     <div id="proximity-alert" class="hidden"></div>
     <button id="center-btn" class="hidden" onclick="recenterMap()">🎯 Wyśrodkuj</button>
 
-    <div id="map"></div>
+    <div id="map-container">
+        <div id="map"></div>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
-        const map = L.map('map', { zoomControl: false, dragging: false, touchZoom: true }).setView([51.9194, 19.1451], 6);
+        // ZMIANA: dragging przywrócone na true. Leaflet sam zajmuje się przesuwaniem w 100% natywnie i stabilnie!
+        const map = L.map('map', { zoomControl: false, dragging: true, touchZoom: true }).setView([51.9194, 19.1451], 6);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
         map.createPane('gpsPane');
@@ -220,12 +228,6 @@
         let lastRouteCalcPosition = null; 
         let priorityPointId = null;
         let wakeLock = null;
-
-        // NOWOŚĆ: Zmienne dla bezbłędnego geograficznego silnika przesuwania (Geographic Anchor Engine)
-        let isCustomDragging = false;
-        let dragStartClientX = 0, dragStartClientY = 0;
-        let dragStartMapCenter = null; 
-        let dragRAF = null;
 
         let currentEditingType = null; 
         let currentEditingGroupId = null;
@@ -334,7 +336,7 @@
             const statsDiv = document.getElementById('route-stats');
             const km = (distance / 1000).toFixed(1); const hrs = Math.floor(duration / 3600); const mins = Math.floor((duration % 3600) / 60);
             let timeStr = ''; if (hrs > 0) timeStr += `${hrs}g `; timeStr += `${mins}m`;
-            statsDiv.innerHTML = `¼ Dystans: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
+            statsDiv.innerHTML = `🛣️ Zostało: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
             statsDiv.classList.remove('hidden');
         }
 
@@ -481,7 +483,6 @@
                         <b>Kolejność: ${point.optLabel !== undefined ? point.optLabel : 'Brak'}</b><br>
                         <strong style="font-size:14px; color:#222;">${point.name}</strong><br>
                         ${point.description ? `<div style="margin-top:4px; padding: 4px; background:#f8f9fa; border-left: 3px solid #17a2b8; font-style: italic; color: #555;">📝 ${point.description}</div>` : ''}
-                        
                         <div style="margin-top: 10px;">
                             <button class="btn-info" style="padding: 8px; font-size: 14px; margin-bottom: 8px; width: 100%; background-color: #17a2b8;" onclick="setPriorityPoint(${point.id})">⭐ Priorytet</button>
                             ${point.status === 'pending' ? `
@@ -572,94 +573,15 @@
             }
         }
 
-        function handleUserMapInteraction() {
+        // ZMIANA: Kiedy kurier ręcznie przesunie mapę (drag), wyłączamy centrowanie GPS, ale NIE ZMIENIAMY obrotu!
+        map.on('dragstart', () => { 
             if (isFollowingGPS) {
                 isFollowingGPS = false;
                 document.getElementById('center-btn').classList.remove('hidden');
                 updateAlertLift();
             }
-        }
-
-        // ZMIANA: Bezbłędny, geograficzny silnik przesuwania mapy w 360° (Geographic Anchor Engine)
-        function initCustomDragging() {
-            const mapDiv = document.getElementById('map');
-            let activePointers = new Map();
-
-            mapDiv.addEventListener('pointerdown', (e) => {
-                if (e.pointerType === 'mouse' && e.button !== 0) return;
-                
-                activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-                
-                if (activePointers.size === 1) {
-                    isCustomDragging = true;
-                    dragStartClientX = e.clientX;
-                    dragStartClientY = e.clientY;
-                    
-                    // ZAPISUJEMY PUNKT STARTOWY bezpośrednio jako koordynaty geograficzne świata
-                    dragStartMapCenter = map.getCenter(); 
-                    
-                    mapDiv.setPointerCapture(e.pointerId);
-                    handleUserMapInteraction();
-                } else {
-                    isCustomDragging = false; 
-                }
-            });
-
-            mapDiv.addEventListener('pointermove', (e) => {
-                if (activePointers.has(e.pointerId)) {
-                    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-                }
-
-                if (!isCustomDragging || activePointers.size !== 1 || !dragStartMapCenter) return;
-                e.preventDefault();
-
-                // 1. Obliczamy fizyczne przesunięcie palca na ekranie telefonu w pikselach
-                let screenDx = e.clientX - dragStartClientX;
-                let screenDy = e.clientY - dragStartClientY;
-
-                // 2. Korygujemy przesunięcie o aktualną matrycę obrotu samochodu
-                let angleRad = currentBearing * Math.PI / 180;
-                let rotatedDx = screenDx * Math.cos(angleRad) - screenDy * Math.sin(angleRad);
-                let rotatedDy = screenDx * Math.sin(angleRad) + screenDy * Math.cos(angleRad);
-
-                if (!dragRAF) {
-                    dragRAF = requestAnimationFrame(() => {
-                        // 3. Zamieniamy punkt geograficzny na piksele Leafleta (względem aktualnego Zoomu)
-                        let centerContainerPoint = map.project(dragStartMapCenter, map.getZoom());
-                        
-                        // 4. Przesuwamy wirtualny punkt o skorygowany wektor obrotu
-                        centerContainerPoint.x -= rotatedDx;
-                        centerContainerPoint.y -= rotatedDy;
-                        
-                        // 5. Tłumaczymy piksele z powrotem na czyste współrzędne geograficzne i ustawiamy widok
-                        let newMapCenterLatLon = map.unproject(centerContainerPoint, map.getZoom());
-                        map.setView(newMapCenterLatLon, map.getZoom(), { animate: false });
-                        
-                        dragRAF = null;
-                    });
-                }
-            });
-
-            function endPointer(e) {
-                activePointers.delete(e.pointerId);
-                try { mapDiv.releasePointerCapture(e.pointerId); } catch(err) {}
-                
-                if (activePointers.size === 1) {
-                    isCustomDragging = true;
-                    let remaining = Array.from(activePointers.values())[0];
-                    dragStartClientX = remaining.x;
-                    dragStartClientY = remaining.y;
-                    dragStartMapCenter = map.getCenter(); // Odświeżamy kotwicę świata dla pozostałego palca
-                } else {
-                    isCustomDragging = false;
-                    if (dragRAF) { cancelAnimationFrame(dragRAF); dragRAF = null; }
-                }
-            }
-
-            mapDiv.addEventListener('pointerup', endPointer);
-            mapDiv.addEventListener('pointercancel', endPointer);
-        }
-
+        });
+        
         function recenterMap() { 
             isFollowingGPS = true; 
             document.getElementById('center-btn').classList.add('hidden'); 
@@ -669,7 +591,7 @@
 
         async function toggleDriveMode() {
             const btn = document.getElementById('track-btn');
-            const mapEl = document.getElementById('map');
+            const containerEl = document.getElementById('map-container');
 
             if (isDriveModeActive) {
                 isDriveModeActive = false;
@@ -681,8 +603,9 @@
                 updateAlertLift(); 
                 releaseWakeLock();
                 
-                mapEl.style.transition = 'transform 0.5s ease-out';
-                mapEl.style.transform = `translate(-50%, -50%) rotate(0deg)`;
+                // ZMIANA: Powrót kontenera do pionu
+                containerEl.style.transition = 'transform 0.5s ease-out';
+                containerEl.style.transform = `rotate(0deg)`;
             } else {
                 const routePoints = deliveryPoints.filter(p => p.status === 'pending');
                 if (routePoints.length > 0) {
@@ -702,8 +625,9 @@
                 
                 if (lastKnownPosition) map.setView(lastKnownPosition, 16);
                 
-                mapEl.style.transition = 'transform 0.5s ease-out';
-                mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
+                // ZMIANA: Obrócenie całego kontenera o dany kąt jazdy
+                containerEl.style.transition = 'transform 0.5s ease-out';
+                containerEl.style.transform = `rotate(${-currentBearing}deg)`;
                 
                 const content = document.getElementById('ui-content');
                 if (!content.classList.contains('hidden')) { togglePanel(); }
@@ -729,20 +653,14 @@
                     let heading = position.coords.heading;
                     let distSinceLast = 0;
                     
-                    if (lastKnownPosition) {
-                        distSinceLast = map.distance([lat, lon], lastKnownPosition);
-                    }
-                    
+                    if (lastKnownPosition) { distSinceLast = map.distance([lat, lon], lastKnownPosition); }
                     let isMoving = (speed !== null && speed > 0.8) || (distSinceLast > 5);
 
                     if (isMoving && lastKnownPosition) {
-                        if (heading === null || isNaN(heading)) {
-                            heading = getBearing(lastKnownPosition[0], lastKnownPosition[1], lat, lon);
-                        }
+                        if (heading === null || isNaN(heading)) { heading = getBearing(lastKnownPosition[0], lastKnownPosition[1], lat, lon); }
                         if (heading !== null && !isNaN(heading)) {
                             let delta = heading - (currentBearing % 360);
-                            if (delta > 180) delta -= 360; 
-                            if (delta < -180) delta += 360;
+                            if (delta > 180) delta -= 360; if (delta < -180) delta += 360;
                             currentBearing += delta;
                         }
                     }
@@ -757,22 +675,20 @@
                         if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) recalculateRouteLine(); 
                     }
                     
+                    // ZMIANA: Kontener nadrzędny obraca się zawsze, gdy tryb jazdy jest aktywny
                     if (isDriveModeActive) {
-                        const mapEl = document.getElementById('map');
-                        mapEl.style.transition = 'transform 0.5s ease-out';
-                        mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
+                        const containerEl = document.getElementById('map-container');
+                        containerEl.style.transition = 'transform 0.5s ease-out';
+                        containerEl.style.transform = `rotate(${-currentBearing}deg)`;
                     }
                     
                     if (isFollowingGPS) { 
                         map.panTo([lat, lon]); 
-                        
                         if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) {
                             if (!lastRouteCalcPosition) { lastRouteCalcPosition = [lat, lon]; } 
                             else {
                                 const distMoved = map.distance([lat, lon], lastRouteCalcPosition);
-                                if (distMoved > 40) { 
-                                    lastRouteCalcPosition = [lat, lon]; recalculateRouteLine(false);
-                                }
+                                if (distMoved > 40) { lastRouteCalcPosition = [lat, lon]; recalculateRouteLine(false); }
                             }
                         }
                     }
@@ -786,8 +702,7 @@
                         if (currentClosestId !== closestPoint.id) {
                             alertDiv.innerHTML = `📍 Cel blisko (<span id="prox-dist">${Math.round(minDistance)}</span>m)<br><small>${shortAddr}</small>`;
                             alertDiv.onclick = function() { openActionModal(closestPoint.id); };
-                            alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id;
-                            updateAlertLift(); 
+                            alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id; updateAlertLift(); 
                         } else { const distSpan = document.getElementById('prox-dist'); if (distSpan) distSpan.innerText = Math.round(minDistance); }
                     } else { alertDiv.classList.add('hidden'); currentClosestId = null; }
                 },
@@ -797,7 +712,6 @@
         }
 
         renderSavedAddresses();
-        initCustomDragging(); 
         initAutomaticGPS();
     </script>
 </body>
