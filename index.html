@@ -8,11 +8,11 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <style>
-        /* ZMIANA 2: Twarda blokada body - uniemożliwia przewijanie "gumowe" całej strony w telefonie */
+        /* ZMIANA: Twarda blokada przewijania całej aplikacji (koniec z uciekającym ekranem) */
         body, html { 
-            margin: 0; padding: 0; width: 100%; height: 100%; 
+            margin: 0; padding: 0; width: 100vw; height: 100dvh; 
             font-family: Arial, sans-serif; overflow: hidden; background: #f8f9fa;
-            position: fixed; top: 0; left: 0; touch-action: none;
+            position: fixed; top: 0; left: 0; overscroll-behavior: none;
         }
         
         #map { 
@@ -20,32 +20,41 @@
             position: absolute; top: 50%; left: 50%; 
             transform: translate(-50%, -50%) rotate(0deg);
             touch-action: none; 
-            overscroll-behavior: none;
             will-change: transform;
         }
         
-        /* ZMIANA 3: Position 'fixed' zamiast 'absolute' dla całego UI przykleja go do szyby telefonu */
+        /* ZMIANA: Menu trasy ograniczone do wysokości ekranu (100dvh) */
         #ui-panel {
-            position: fixed; top: 10px; right: 10px; z-index: 1000;
+            position: absolute; top: 10px; right: 10px; z-index: 1000;
             background: white; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); 
-            width: 320px; max-width: 90vw; display: flex; flex-direction: column;
-            max-height: 85vh; 
+            width: 320px; max-width: 90vw; 
+            max-height: calc(100dvh - 30px); 
+            display: flex; flex-direction: column;
         }
         
         #ui-header {
             background-color: #343a40; color: white; padding: 15px; border-radius: 8px; cursor: pointer;
-            display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 16px; position: sticky; top: 0; z-index: 2;
+            display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 16px; 
+            flex-shrink: 0;
         }
         
         #ui-panel:not(.collapsed) #ui-header { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
         
-        #ui-content { padding: 15px; overflow-y: auto; max-height: calc(85vh - 50px); }
-        .scroll-buffer { height: 40px; } 
+        /* ZMIANA: Scrollowanie działa TYLKO tutaj */
+        #ui-content { 
+            padding: 15px; 
+            overflow-y: auto; 
+            flex-grow: 1; 
+            -webkit-overflow-scrolling: touch; 
+            overscroll-behavior: contain;
+        }
+        
+        .scroll-buffer { height: 40px; flex-shrink: 0; } 
         .hidden { display: none !important; }
         
-        input[type="text"], select { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 16px;} /* Font 16px blokuje auto-zoom na iOS */
+        input[type="text"], select { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 16px;}
         
-        button { width: 100%; padding: 10px; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
+        button { width: 100%; padding: 10px; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px; flex-shrink: 0; }
         .btn-primary { background-color: #007bff; } .btn-primary:hover { background-color: #0056b3; }
         .btn-success { background-color: #28a745; } .btn-success:hover { background-color: #218838; }
         .btn-warning { background-color: #ffc107; color: #212529; } .btn-warning:hover { background-color: #e0a800; }
@@ -53,7 +62,7 @@
         .btn-info { background-color: #17a2b8; } .btn-info:hover { background-color: #138496; }
         .btn-secondary { background-color: #6c757d; } .btn-secondary:hover { background-color: #5a6268; }
         
-        #points-list { margin-top: 10px; padding-left: 20px; font-size: 14px; max-height: 180px; overflow-y: auto; }
+        #points-list { margin-top: 10px; padding-left: 20px; font-size: 14px; }
         hr { border: 0; height: 1px; background: #ddd; margin: 15px 0; }
 
         .custom-marker {
@@ -72,7 +81,7 @@
         .action-edit { color: #007bff; cursor: pointer; font-weight: bold; }
         .action-delete { color: #dc3545; cursor: pointer; font-weight: bold; }
         
-        #saved-groups-container { max-height: 220px; overflow-y: auto; margin-top: 10px; margin-bottom: 10px; }
+        #saved-groups-container { margin-top: 10px; margin-bottom: 10px; }
         .saved-item-list { list-style: none; padding-left: 5px; margin: 5px 0 0 0; border-top: 1px dashed #ccc; padding-top: 5px; }
         .saved-item { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-bottom: 6px; background: white; padding: 6px; border-radius: 4px; border: 1px solid #eee;}
         .saved-item span.name { flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -83,9 +92,8 @@
             100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 193, 7, 0); }
         }
         
-        /* ZMIANA 3: Position fixed w powiadomieniu */
         #proximity-alert {
-            position: fixed; bottom: 20px; right: 20px; z-index: 1000;
+            position: absolute; bottom: 20px; right: 20px; z-index: 1000;
             background: #ffc107; color: #212529; padding: 10px 14px; border-radius: 20px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid white;
             font-weight: bold; font-size: 13px; cursor: pointer; text-align: center;
@@ -96,9 +104,8 @@
         #proximity-alert:hover { background: #e0a800; }
         #proximity-alert.lifted { bottom: 100px !important; }
 
-        /* ZMIANA 3: Position fixed w przycisku wyśrodkuj */
         #center-btn {
-            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000;
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000;
             background-color: #007bff; color: white; padding: 12px 24px; border: none; border-radius: 25px;
             font-weight: bold; font-size: 16px; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.4);
             width: auto; margin-bottom: 0; display: inline-block;
@@ -107,12 +114,11 @@
         
         #route-stats {
             background: #e9ecef; padding: 10px; border-radius: 4px; margin-bottom: 10px;
-            font-weight: bold; font-size: 14px; text-align: center;
+            font-weight: bold; font-size: 14px; text-align: center; flex-shrink: 0;
         }
 
-        /* ZMIANA 3: Position fixed w oknach Modal */
         .modal-overlay {
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100dvh;
             background: rgba(0, 0, 0, 0.5); z-index: 2000; 
             display: flex; justify-content: center; align-items: center;
         }
@@ -204,6 +210,16 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
+        // ZMIANA: Globalna blokada przesunięcia okna na telefonie
+        document.addEventListener('touchmove', function(e) {
+            // Jeśli dotykamy wewnątrz rozwijanego menu - pozwalamy na scrollowanie
+            if (e.target.closest('#ui-content') || e.target.closest('.modal-box')) {
+                return;
+            }
+            // Wszystko inne na stronie jest zablokowane i nie może wywołać przewijania
+            e.preventDefault();
+        }, { passive: false });
+
         const map = L.map('map', { zoomControl: false, dragging: false, touchZoom: true }).setView([51.9194, 19.1451], 6);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
@@ -229,11 +245,6 @@
         let lastRouteCalcPosition = null; 
         let priorityPointId = null;
         let wakeLock = null;
-
-        let isCustomDragging = false;
-        let dragStartClientX = 0, dragStartClientY = 0;
-        let dragStartMapCenter = null; 
-        let dragRAF = null;
 
         let currentEditingType = null; 
         let currentEditingGroupId = null;
@@ -588,78 +599,73 @@
             }
         }
 
+        // ZMIANA: Powrót do stabilnego silnika przesuwania (Twarda Matematyka + Północ)
         function initCustomDragging() {
             const mapDiv = document.getElementById('map');
-            let activePointers = new Map();
+            let isDragging = false;
+            let lastX = 0, lastY = 0;
 
-            mapDiv.addEventListener('pointerdown', (e) => {
-                if (e.pointerType === 'mouse' && e.button !== 0) return;
-                
-                activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-                
-                if (activePointers.size === 1) {
-                    isCustomDragging = true;
-                    dragStartClientX = e.clientX;
-                    dragStartClientY = e.clientY;
-                    
-                    dragStartMapCenter = map.getCenter(); 
-                    
-                    mapDiv.setPointerCapture(e.pointerId);
+            // Obsługa dotyku na smartfonach
+            mapDiv.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1) {
+                    isDragging = true;
+                    lastX = e.touches[0].clientX;
+                    lastY = e.touches[0].clientY;
                     handleUserMapInteraction();
                 } else {
-                    isCustomDragging = false; 
+                    isDragging = false; 
                 }
+            }, { passive: false });
+
+            mapDiv.addEventListener('touchmove', (e) => {
+                if (!isDragging || e.touches.length !== 1) return;
+                
+                // ZMIANA: preventDefault blokuje błędy przerwania dotyku przez przeglądarkę
+                e.preventDefault(); 
+
+                let screenDx = e.touches[0].clientX - lastX;
+                let screenDy = e.touches[0].clientY - lastY;
+                
+                lastX = e.touches[0].clientX;
+                lastY = e.touches[0].clientY;
+
+                let rad = currentBearing * Math.PI / 180;
+                
+                // Formuła matematyczna dopasowująca kąt do ruchu palca na ekranie
+                let mapDx = screenDx * Math.cos(rad) - screenDy * Math.sin(rad);
+                let mapDy = screenDx * Math.sin(rad) + screenDy * Math.cos(rad);
+
+                map.panBy([-mapDx, -mapDy], { animate: false });
+            }, { passive: false });
+
+            mapDiv.addEventListener('touchend', () => { isDragging = false; });
+            mapDiv.addEventListener('touchcancel', () => { isDragging = false; });
+
+            // Obsługa myszy (dla pewności na PC)
+            mapDiv.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                isDragging = true;
+                lastX = e.clientX;
+                lastY = e.clientY;
+                handleUserMapInteraction();
             });
 
-            mapDiv.addEventListener('pointermove', (e) => {
-                if (activePointers.has(e.pointerId)) {
-                    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-                }
-
-                if (!isCustomDragging || activePointers.size !== 1 || !dragStartMapCenter) return;
-                e.preventDefault();
-
-                let screenDx = e.clientX - dragStartClientX;
-                let screenDy = e.clientY - dragStartClientY;
-
-                let angleRad = currentBearing * Math.PI / 180;
+            window.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                let screenDx = e.clientX - lastX;
+                let screenDy = e.clientY - lastY;
                 
-                let rotatedDx = screenDx * Math.cos(angleRad) - screenDy * Math.sin(angleRad);
-                let rotatedDy = screenDx * Math.sin(angleRad) + screenDy * Math.cos(angleRad);
+                lastX = e.clientX;
+                lastY = e.clientY;
 
-                if (!dragRAF) {
-                    dragRAF = requestAnimationFrame(() => {
-                        let centerContainerPoint = map.project(dragStartMapCenter, map.getZoom());
-                        
-                        centerContainerPoint.x -= rotatedDx;
-                        centerContainerPoint.y -= rotatedDy;
-                        
-                        let newMapCenterLatLon = map.unproject(centerContainerPoint, map.getZoom());
-                        map.setView(newMapCenterLatLon, map.getZoom(), { animate: false });
-                        
-                        dragRAF = null;
-                    });
-                }
+                let rad = currentBearing * Math.PI / 180;
+                let mapDx = screenDx * Math.cos(rad) - screenDy * Math.sin(rad);
+                let mapDy = screenDx * Math.sin(rad) + screenDy * Math.cos(rad);
+
+                map.panBy([-mapDx, -mapDy], { animate: false });
             });
 
-            function endPointer(e) {
-                activePointers.delete(e.pointerId);
-                try { mapDiv.releasePointerCapture(e.pointerId); } catch(err) {}
-                
-                if (activePointers.size === 1) {
-                    isCustomDragging = true;
-                    let remaining = Array.from(activePointers.values())[0];
-                    dragStartClientX = remaining.x;
-                    dragStartClientY = remaining.y;
-                    dragStartMapCenter = map.getCenter(); 
-                } else {
-                    isCustomDragging = false;
-                    if (dragRAF) { cancelAnimationFrame(dragRAF); dragRAF = null; }
-                }
-            }
-
-            mapDiv.addEventListener('pointerup', endPointer);
-            mapDiv.addEventListener('pointercancel', endPointer);
+            window.addEventListener('mouseup', () => { isDragging = false; });
         }
 
         function recenterMap() { 
