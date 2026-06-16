@@ -2,15 +2,19 @@
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Planer Trasy Kuriera</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     
     <style>
-        body, html { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; overflow: hidden; background: #f8f9fa; }
+        /* ZMIANA 2: Twarda blokada body - uniemożliwia przewijanie "gumowe" całej strony w telefonie */
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            font-family: Arial, sans-serif; overflow: hidden; background: #f8f9fa;
+            position: fixed; top: 0; left: 0; touch-action: none;
+        }
         
-        /* ZMIANA: Czysty kontener mapy, bez nakładania zbędnych warstw */
         #map { 
             width: 150vmax; height: 150vmax; z-index: 1; 
             position: absolute; top: 50%; left: 50%; 
@@ -20,11 +24,12 @@
             will-change: transform;
         }
         
+        /* ZMIANA 3: Position 'fixed' zamiast 'absolute' dla całego UI przykleja go do szyby telefonu */
         #ui-panel {
-            position: absolute; top: 10px; right: 10px; z-index: 1000;
+            position: fixed; top: 10px; right: 10px; z-index: 1000;
             background: white; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); 
             width: 320px; max-width: 90vw; display: flex; flex-direction: column;
-            max-height: 90vh; 
+            max-height: 85vh; 
         }
         
         #ui-header {
@@ -34,11 +39,11 @@
         
         #ui-panel:not(.collapsed) #ui-header { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
         
-        #ui-content { padding: 15px; overflow-y: auto; max-height: calc(90vh - 50px); }
+        #ui-content { padding: 15px; overflow-y: auto; max-height: calc(85vh - 50px); }
         .scroll-buffer { height: 40px; } 
         .hidden { display: none !important; }
         
-        input[type="text"], select { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 14px;}
+        input[type="text"], select { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 16px;} /* Font 16px blokuje auto-zoom na iOS */
         
         button { width: 100%; padding: 10px; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
         .btn-primary { background-color: #007bff; } .btn-primary:hover { background-color: #0056b3; }
@@ -78,8 +83,9 @@
             100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 193, 7, 0); }
         }
         
+        /* ZMIANA 3: Position fixed w powiadomieniu */
         #proximity-alert {
-            position: absolute; bottom: 20px; right: 20px; z-index: 1000;
+            position: fixed; bottom: 20px; right: 20px; z-index: 1000;
             background: #ffc107; color: #212529; padding: 10px 14px; border-radius: 20px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid white;
             font-weight: bold; font-size: 13px; cursor: pointer; text-align: center;
@@ -90,8 +96,9 @@
         #proximity-alert:hover { background: #e0a800; }
         #proximity-alert.lifted { bottom: 100px !important; }
 
+        /* ZMIANA 3: Position fixed w przycisku wyśrodkuj */
         #center-btn {
-            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000;
+            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000;
             background-color: #007bff; color: white; padding: 12px 24px; border: none; border-radius: 25px;
             font-weight: bold; font-size: 16px; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.4);
             width: auto; margin-bottom: 0; display: inline-block;
@@ -103,8 +110,9 @@
             font-weight: bold; font-size: 14px; text-align: center;
         }
 
+        /* ZMIANA 3: Position fixed w oknach Modal */
         .modal-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
             background: rgba(0, 0, 0, 0.5); z-index: 2000; 
             display: flex; justify-content: center; align-items: center;
         }
@@ -196,7 +204,6 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
-        // ZMIANA: Domyślne przesuwanie w Leaflet jest WYŁĄCZONE (dragging: false) - kontrolujemy to całkowicie sami.
         const map = L.map('map', { zoomControl: false, dragging: false, touchZoom: true }).setView([51.9194, 19.1451], 6);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
@@ -222,6 +229,11 @@
         let lastRouteCalcPosition = null; 
         let priorityPointId = null;
         let wakeLock = null;
+
+        let isCustomDragging = false;
+        let dragStartClientX = 0, dragStartClientY = 0;
+        let dragStartMapCenter = null; 
+        let dragRAF = null;
 
         let currentEditingType = null; 
         let currentEditingGroupId = null;
@@ -576,64 +588,72 @@
             }
         }
 
-        // ZMIANA: Twarda Matematyka 2D. Wektor palca przekształcany przez kąt do standardowego punktu Leafleta.
         function initCustomDragging() {
             const mapDiv = document.getElementById('map');
-            let isDragging = false;
-            let dragLastX = 0, dragLastY = 0;
-            let dragRAF = null;
-            let activePointers = 0;
+            let activePointers = new Map();
 
             mapDiv.addEventListener('pointerdown', (e) => {
                 if (e.pointerType === 'mouse' && e.button !== 0) return;
-                activePointers++;
                 
-                // Blokujemy nasze przesuwanie, jeżeli ktoś przykłada 2 palce (wtedy działa zoom Leafleta)
-                if (activePointers === 1) {
-                    isDragging = true;
-                    dragLastX = e.clientX;
-                    dragLastY = e.clientY;
+                activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                
+                if (activePointers.size === 1) {
+                    isCustomDragging = true;
+                    dragStartClientX = e.clientX;
+                    dragStartClientY = e.clientY;
+                    
+                    dragStartMapCenter = map.getCenter(); 
+                    
                     mapDiv.setPointerCapture(e.pointerId);
                     handleUserMapInteraction();
                 } else {
-                    isDragging = false;
+                    isCustomDragging = false; 
                 }
             });
 
             mapDiv.addEventListener('pointermove', (e) => {
-                if (!isDragging || activePointers !== 1) return;
+                if (activePointers.has(e.pointerId)) {
+                    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                }
+
+                if (!isCustomDragging || activePointers.size !== 1 || !dragStartMapCenter) return;
                 e.preventDefault();
 
-                // 1. Zbieramy czysty ruch palca na fizycznym ekranie
-                let screenDx = e.clientX - dragLastX;
-                let screenDy = e.clientY - dragLastY;
-                
-                dragLastX = e.clientX;
-                dragLastY = e.clientY;
+                let screenDx = e.clientX - dragStartClientX;
+                let screenDy = e.clientY - dragStartClientY;
 
-                // 2. Przekształcamy ruch przez macierz obrotu dla aktualnego kąta
-                let rad = currentBearing * Math.PI / 180;
+                let angleRad = currentBearing * Math.PI / 180;
                 
-                // Formuła odwracająca ruch z ekranu na "północną" mapę pod spodem
-                let mapDx = screenDx * Math.cos(rad) - screenDy * Math.sin(rad);
-                let mapDy = screenDx * Math.sin(rad) + screenDy * Math.cos(rad);
+                let rotatedDx = screenDx * Math.cos(angleRad) - screenDy * Math.sin(angleRad);
+                let rotatedDy = screenDx * Math.sin(angleRad) + screenDy * Math.cos(angleRad);
 
-                // 3. Leaflet .panBy sam zarządza subpikselami
                 if (!dragRAF) {
                     dragRAF = requestAnimationFrame(() => {
-                        // Przesuwamy widok - wektor w panBy musi być odwrotny do fizycznego ruchu "świata"
-                        map.panBy([-mapDx, -mapDy], { animate: false });
+                        let centerContainerPoint = map.project(dragStartMapCenter, map.getZoom());
+                        
+                        centerContainerPoint.x -= rotatedDx;
+                        centerContainerPoint.y -= rotatedDy;
+                        
+                        let newMapCenterLatLon = map.unproject(centerContainerPoint, map.getZoom());
+                        map.setView(newMapCenterLatLon, map.getZoom(), { animate: false });
+                        
                         dragRAF = null;
                     });
                 }
             });
 
             function endPointer(e) {
-                activePointers = Math.max(0, activePointers - 1);
+                activePointers.delete(e.pointerId);
                 try { mapDiv.releasePointerCapture(e.pointerId); } catch(err) {}
                 
-                if (activePointers === 0) {
-                    isDragging = false;
+                if (activePointers.size === 1) {
+                    isCustomDragging = true;
+                    let remaining = Array.from(activePointers.values())[0];
+                    dragStartClientX = remaining.x;
+                    dragStartClientY = remaining.y;
+                    dragStartMapCenter = map.getCenter(); 
+                } else {
+                    isCustomDragging = false;
                     if (dragRAF) { cancelAnimationFrame(dragRAF); dragRAF = null; }
                 }
             }
@@ -715,10 +735,13 @@
                     let isMoving = (speed !== null && speed > 0.8) || (distSinceLast > 5);
 
                     if (isMoving && lastKnownPosition) {
-                        if (heading === null || isNaN(heading)) { heading = getBearing(lastKnownPosition[0], lastKnownPosition[1], lat, lon); }
+                        if (heading === null || isNaN(heading)) {
+                            heading = getBearing(lastKnownPosition[0], lastKnownPosition[1], lat, lon);
+                        }
                         if (heading !== null && !isNaN(heading)) {
                             let delta = heading - (currentBearing % 360);
-                            if (delta > 180) delta -= 360; if (delta < -180) delta += 360;
+                            if (delta > 180) delta -= 360; 
+                            if (delta < -180) delta += 360;
                             currentBearing += delta;
                         }
                     }
@@ -741,11 +764,14 @@
                     
                     if (isFollowingGPS) { 
                         map.panTo([lat, lon]); 
+                        
                         if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) {
                             if (!lastRouteCalcPosition) { lastRouteCalcPosition = [lat, lon]; } 
                             else {
                                 const distMoved = map.distance([lat, lon], lastRouteCalcPosition);
-                                if (distMoved > 40) { lastRouteCalcPosition = [lat, lon]; recalculateRouteLine(false); }
+                                if (distMoved > 40) { 
+                                    lastRouteCalcPosition = [lat, lon]; recalculateRouteLine(false);
+                                }
                             }
                         }
                     }
@@ -759,7 +785,8 @@
                         if (currentClosestId !== closestPoint.id) {
                             alertDiv.innerHTML = `📍 Cel blisko (<span id="prox-dist">${Math.round(minDistance)}</span>m)<br><small>${shortAddr}</small>`;
                             alertDiv.onclick = function() { openActionModal(closestPoint.id); };
-                            alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id; updateAlertLift(); 
+                            alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id;
+                            updateAlertLift(); 
                         } else { const distSpan = document.getElementById('prox-dist'); if (distSpan) distSpan.innerText = Math.round(minDistance); }
                     } else { alertDiv.classList.add('hidden'); currentClosestId = null; }
                 },
@@ -769,7 +796,7 @@
         }
 
         renderSavedAddresses();
-        initCustomDragging(); // Włączenie silnika dotyku
+        initCustomDragging(); 
         initAutomaticGPS();
     </script>
 </body>
