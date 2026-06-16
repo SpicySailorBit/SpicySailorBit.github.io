@@ -14,6 +14,8 @@
             width: 150vmax; height: 150vmax; z-index: 1; 
             position: absolute; top: 50%; left: 50%; 
             transform: translate(-50%, -50%) rotate(0deg);
+            /* ZMIANA: Dotyk całkowicie na sztywno, zapobiega odświeżaniu i przewijaniu strony na smartfonach */
+            touch-action: none; 
         }
         
         #ui-panel {
@@ -192,7 +194,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
-        // ZMIANA: Dodano dragging: false do ustawień Leafleta, by przejąć pełną, zsynchronizowaną kontrolę nad przesuwaniem mapy
+        // Mamy włączone touchZoom (szczypanie mapy dwoma palcami), ale przesuwanie 1 palcem przejmujemy ręcznie
         const map = L.map('map', { zoomControl: false, dragging: false, touchZoom: true }).setView([51.9194, 19.1451], 6);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
@@ -219,7 +221,7 @@
         let priorityPointId = null;
         let wakeLock = null;
 
-        // NOWOŚĆ: Zmienne pomocnicze dla naszego nowego silnika przesuwania (Custom Dragging Engine)
+        // Silnik dotyku:
         let isCustomDragging = false;
         let dragStartX = 0, dragStartY = 0;
 
@@ -251,9 +253,7 @@
         }
 
         async function requestWakeLock() {
-            try {
-                if ('wakeLock' in navigator) { wakeLock = await navigator.wakeLock.request('screen'); }
-            } catch (err) {}
+            try { if ('wakeLock' in navigator) { wakeLock = await navigator.wakeLock.request('screen'); } } catch (err) {}
         }
 
         function releaseWakeLock() {
@@ -349,7 +349,6 @@
                     </div>
                 `;
                 details.appendChild(summary);
-                
                 const ul = document.createElement('ul'); ul.className = 'saved-item-list';
                 if (group.addresses.length === 0) { ul.innerHTML = `<li style="font-size:11px; color:#888; padding:5px;">Pusta grupa</li>`; } 
                 else {
@@ -472,6 +471,7 @@
                 if (point.status === 'completed') className += ' zaliczony'; 
                 else if (point.status === 'postponed') className += ' pozniej';
                 else if (point.id === priorityPointId) className += ' priorytet'; 
+                
                 const customIcon = L.divIcon({ className: className, html: point.optLabel !== undefined ? point.optLabel : '', iconSize: [32, 32], iconAnchor: [16, 16] });
                 
                 const popupHtml = `
@@ -479,6 +479,7 @@
                         <b>Kolejność: ${point.optLabel !== undefined ? point.optLabel : 'Brak'}</b><br>
                         <strong style="font-size:14px; color:#222;">${point.name}</strong><br>
                         ${point.description ? `<div style="margin-top:4px; padding: 4px; background:#f8f9fa; border-left: 3px solid #17a2b8; font-style: italic; color: #555;">📝 ${point.description}</div>` : ''}
+                        
                         <div style="margin-top: 10px;">
                             <button class="btn-info" style="padding: 8px; font-size: 14px; margin-bottom: 8px; width: 100%; background-color: #17a2b8;" onclick="setPriorityPoint(${point.id})">⭐ Priorytet</button>
                             ${point.status === 'pending' ? `
@@ -497,7 +498,7 @@
 
         window.setPriorityPoint = async function(id) {
             priorityPointId = id; const pt = deliveryPoints.find(p => p.id === id); if(pt) pt.status = 'pending'; map.closePopup();
-            const btn = document.getElementById('track-btn'); btn.innerText = "⏳ Przeliczanie priorytetu..."; 
+            const btn = document.getElementById('track-btn'); btn.innerText = "⏳ Przeliczanie..."; 
             await optimizeRoute();
             if (isDriveModeActive) { btn.innerText = "⏹ Zatrzymaj podążanie"; } else { btn.innerText = "🚀 Wyruszam!"; }
         }
@@ -513,7 +514,7 @@
 
         async function optimizeRoute() {
             const routePoints = deliveryPoints.filter(p => p.status === 'pending'); if (routePoints.length < 1) { return true; } 
-            if (!lastKnownPosition) { alert("Oczekiwanie na sygnał GPS... Czerwona kropka musi być widoczna, aby wyznaczyć trasę."); return false; }
+            if (!lastKnownPosition) { alert("Oczekiwanie na sygnał GPS..."); return false; }
             if (routePoints.length === 1) {
                 routePoints[0].optLabel = 1; updateListUI(); drawAllMarkers(); await recalculateRouteLine(true); return true;
             }
@@ -527,8 +528,8 @@
                     if (data.code === 'Ok') {
                         prioPt.optLabel = 1; others.forEach((point, index) => { point.optLabel = data.waypoints[index + 1].waypoint_index + 1; });
                         updateListUI(); drawAllMarkers(); await recalculateRouteLine(true); return true;
-                    } else { alert("Nie udało się przeliczyć priorytetu."); return false; }
-                } catch (error) { alert("Błąd połączenia."); return false; }
+                    } else { return false; }
+                } catch (error) { return false; }
             } else {
                 coordsArray.push(`${lastKnownPosition[1]},${lastKnownPosition[0]}`); routePoints.forEach(p => coordsArray.push(`${p.lon},${p.lat}`));     
                 const osrmUrl = `https://router.project-osrm.org/trip/v1/driving/${coordsArray.join(';')}?source=first&roundtrip=false&overview=false`;
@@ -537,8 +538,8 @@
                     if (data.code === 'Ok') {
                         routePoints.forEach((point, index) => { const optIndex = data.waypoints[index + 1].waypoint_index; point.optLabel = optIndex; });
                         updateListUI(); drawAllMarkers(); await recalculateRouteLine(true); return true;
-                    } else { alert("Nie udało się wyznaczyć optymalnej trasy."); return false; }
-                } catch (error) { alert("Błąd połączenia."); return false; }
+                    } else { return false; }
+                } catch (error) { return false; }
             }
         }
 
@@ -569,7 +570,7 @@
             }
         }
 
-        // NOWOŚĆ: Logika wyłączania automatycznego śledzenia kamery po dotknięciu/przesunięciu mapy przez użytkownika
+        // ZMIANA: Obsługa odsunięcia kamery (odklejenia GPS) - bez niszczenia rotacji!
         function handleUserMapInteraction() {
             if (isFollowingGPS) {
                 isFollowingGPS = false;
@@ -578,26 +579,46 @@
             }
         }
 
-        // NOWOŚĆ: Kompleksowy Silnik Przesuwania Mapy (Custom Dragging Engine) zsynchronizowany z obrotem 360°
+        // NOWOŚĆ: Zaawansowany i ciągły silnik dotyku używający Pointer Events
         function initCustomDragging() {
             const mapDiv = document.getElementById('map');
+            let activePointers = new Map();
 
-            // 1. Obsługa dla Myszki (Komputery / Testy)
-            mapDiv.addEventListener('mousedown', (e) => {
-                if (e.button !== 0) return; // Tylko lewy przycisk myszy
-                isCustomDragging = true;
-                dragStartX = e.clientX;
-                dragStartY = e.clientY;
-                handleUserMapInteraction();
+            mapDiv.addEventListener('pointerdown', (e) => {
+                // Pozwalamy na dotyk palcem lub lewym przyciskiem myszy
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
+                
+                // Rejestrujemy palec
+                activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                
+                // Jeśli to pierwszy i jedyny palec, aktywujemy swobodne przesuwanie
+                if (activePointers.size === 1) {
+                    isCustomDragging = true;
+                    dragStartX = e.clientX;
+                    dragStartY = e.clientY;
+                    
+                    // KRADNIEMY WSKAŹNIK (Zapewnia ciągłość pracy nawet po zjechaniu palca)
+                    mapDiv.setPointerCapture(e.pointerId);
+                    handleUserMapInteraction();
+                } else {
+                    // Jeśli użytkownik kładzie 2 palce (do zooma), puszczamy blokadę przesuwania 
+                    isCustomDragging = false; 
+                }
             });
 
-            window.addEventListener('mousemove', (e) => {
-                if (!isCustomDragging) return;
-                
+            mapDiv.addEventListener('pointermove', (e) => {
+                if (activePointers.has(e.pointerId)) {
+                    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                }
+
+                // Przerywamy jeśli nie jesteśmy w trybie dragu albo używamy wielu palców
+                if (!isCustomDragging || activePointers.size !== 1) return;
+                e.preventDefault();
+
                 let screenDx = e.clientX - dragStartX;
                 let screenDy = e.clientY - dragStartY;
 
-                // MAGIA: Rotacja wektora przesunięcia o aktualny kąt jazdy za pomocą trygonometrii
+                // TRYGONOMETRIA: Obrót współrzędnych palca, by zgadzały się z obrotem kamery CSS
                 let angleRad = currentBearing * Math.PI / 180;
                 let mapDx = screenDx * Math.cos(angleRad) - screenDy * Math.sin(angleRad);
                 let mapDy = screenDx * Math.sin(angleRad) + screenDy * Math.cos(angleRad);
@@ -608,67 +629,82 @@
                 dragStartY = e.clientY;
             });
 
-            window.addEventListener('mouseup', () => { isCustomDragging = false; });
+            // Funkcja czyszcząca sesję palca, wywoływana przy końcu lub awarii dotyku
+            function endPointer(e) {
+                activePointers.delete(e.pointerId);
+                try { mapDiv.releasePointerCapture(e.pointerId); } catch(err) {}
+                
+                if (activePointers.size === 1) {
+                    // Jeśli puściliśmy jeden z dwóch palców, płynnie wznów przesuwanie mapy dla pozostałego
+                    isCustomDragging = true;
+                    let remaining = Array.from(activePointers.values())[0];
+                    dragStartX = remaining.x;
+                    dragStartY = remaining.y;
+                } else {
+                    isCustomDragging = false;
+                }
+            }
 
-            // 2. Obsługa dla Palca (Ekrany dotykowe smartfonów)
-            mapDiv.addEventListener('touchstart', (e) => {
-                if (e.touches.length > 1) return; // Pozwól Leafletowi obsłużyć pinch-zoom (przybliżanie dwoma palcami)
-                isCustomDragging = true;
-                dragStartX = e.touches[0].clientX;
-                dragStartY = e.touches[0].clientY;
-                handleUserMapInteraction();
-            });
-
-            window.addEventListener('touchmove', (e) => {
-                if (!isCustomDragging) return;
-                if (e.touches.length > 1) { isCustomDragging = false; return; } // Przerywamy ruch jeśli dojdzie drugi palec
-
-                if (e.cancelable) e.preventDefault(); // Blokujemy przeskakiwanie/bouncowanie całej strony w smartfonie
-
-                let screenDx = e.touches[0].clientX - dragStartX;
-                let screenDy = e.touches[0].clientY - dragStartY;
-
-                // Tłumaczenie ruchu palca na obróconą mapę
-                let angleRad = currentBearing * Math.PI / 180;
-                let mapDx = screenDx * Math.cos(angleRad) - screenDy * Math.sin(angleRad);
-                let mapDy = screenDx * Math.sin(angleRad) + screenDy * Math.cos(angleRad);
-
-                map.panBy([-mapDx, -mapDy], { animate: false });
-
-                dragStartX = e.touches[0].clientX;
-                dragStartY = e.touches[0].clientY;
-            }, { passive: false });
-
-            window.addEventListener('touchend', () => { isCustomDragging = false; });
+            mapDiv.addEventListener('pointerup', endPointer);
+            mapDiv.addEventListener('pointercancel', endPointer);
         }
-        
+
         function recenterMap() { 
-            isFollowingGPS = true; document.getElementById('center-btn').classList.add('hidden'); updateAlertLift(); 
+            isFollowingGPS = true; 
+            document.getElementById('center-btn').classList.add('hidden'); 
+            updateAlertLift(); 
             if (lastKnownPosition) { map.panTo(lastKnownPosition); } 
         }
 
         async function toggleDriveMode() {
-            const btn = document.getElementById('track-btn'); const mapEl = document.getElementById('map');
+            const btn = document.getElementById('track-btn');
+            const mapEl = document.getElementById('map');
+
             if (isDriveModeActive) {
-                isDriveModeActive = false; isFollowingGPS = false; btn.innerText = "🚀 Wyruszam!"; btn.className = "btn-success"; btn.style.backgroundColor = "#28a745";
-                document.getElementById('center-btn').classList.add('hidden'); updateAlertLift(); releaseWakeLock();
-                mapEl.style.transition = 'transform 0.5s ease-out'; mapEl.style.transform = `translate(-50%, -50%) rotate(0deg)`;
+                // Wyłączamy CAŁKOWICIE tryb jazdy - wtedy i tylko wtedy odwracamy mapę do pionu
+                isDriveModeActive = false;
+                isFollowingGPS = false;
+                btn.innerText = "🚀 Wyruszam!"; 
+                btn.className = "btn-success"; 
+                btn.style.backgroundColor = "#28a745";
+                document.getElementById('center-btn').classList.add('hidden'); 
+                updateAlertLift(); 
+                releaseWakeLock();
+                
+                mapEl.style.transition = 'transform 0.5s ease-out';
+                mapEl.style.transform = `translate(-50%, -50%) rotate(0deg)`;
             } else {
+                // Rozpoczynamy jazdę
                 const routePoints = deliveryPoints.filter(p => p.status === 'pending');
                 if (routePoints.length > 0) {
-                    btn.innerText = "⏳ Wyznaczam trasę..."; const success = await optimizeRoute(); if (!success) { btn.innerText = "🚀 Wyruszam!"; return; }
+                    btn.innerText = "⏳ Wyznaczam trasę..."; 
+                    const success = await optimizeRoute();
+                    if (!success) { btn.innerText = "🚀 Wyruszam!"; return; }
                 }
-                isDriveModeActive = true; isFollowingGPS = true; btn.innerText = "⏹ Zatrzymaj podążanie"; btn.className = "btn-danger"; btn.style.backgroundColor = "#dc3545";
-                document.getElementById('center-btn').classList.add('hidden'); updateAlertLift(); await requestWakeLock();
+                
+                isDriveModeActive = true;
+                isFollowingGPS = true;
+                btn.innerText = "⏹ Zatrzymaj podążanie"; 
+                btn.className = "btn-danger"; 
+                btn.style.backgroundColor = "#dc3545";
+                document.getElementById('center-btn').classList.add('hidden'); 
+                updateAlertLift();
+                await requestWakeLock();
+                
                 if (lastKnownPosition) map.setView(lastKnownPosition, 16);
-                mapEl.style.transition = 'transform 0.5s ease-out'; mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
-                const content = document.getElementById('ui-content'); if (!content.classList.contains('hidden')) { togglePanel(); }
+                
+                mapEl.style.transition = 'transform 0.5s ease-out';
+                mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
+                
+                const content = document.getElementById('ui-content');
+                if (!content.classList.contains('hidden')) { togglePanel(); }
             }
         }
 
         function openActionModal(pointId) {
             const pt = deliveryPoints.find(p => p.id === pointId); if (!pt) return;
-            currentActionPointId = pointId; document.getElementById('action-modal-address').innerText = pt.name; document.getElementById('action-modal-overlay').classList.remove('hidden');
+            currentActionPointId = pointId; document.getElementById('action-modal-address').innerText = pt.name;
+            document.getElementById('action-modal-overlay').classList.remove('hidden');
         }
 
         closeActionModal = function() { document.getElementById('action-modal-overlay').classList.add('hidden'); currentActionPointId = null; }
@@ -679,18 +715,29 @@
             trackingId = navigator.geolocation.watchPosition(
                 (position) => {
                     const lat = position.coords.latitude; const lon = position.coords.longitude; 
-                    let speed = position.coords.speed; let heading = position.coords.heading; let distSinceLast = 0;
-                    if (lastKnownPosition) { distSinceLast = map.distance([lat, lon], lastKnownPosition); }
+                    
+                    let speed = position.coords.speed;
+                    let heading = position.coords.heading;
+                    let distSinceLast = 0;
+                    
+                    if (lastKnownPosition) {
+                        distSinceLast = map.distance([lat, lon], lastKnownPosition);
+                    }
+                    
                     let isMoving = (speed !== null && speed > 0.8) || (distSinceLast > 5);
 
                     if (isMoving && lastKnownPosition) {
-                        if (heading === null || isNaN(heading)) { heading = getBearing(lastKnownPosition[0], lastKnownPosition[1], lat, lon); }
+                        if (heading === null || isNaN(heading)) {
+                            heading = getBearing(lastKnownPosition[0], lastKnownPosition[1], lat, lon);
+                        }
                         if (heading !== null && !isNaN(heading)) {
                             let delta = heading - (currentBearing % 360);
-                            if (delta > 180) delta -= 360; if (delta < -180) delta += 360;
+                            if (delta > 180) delta -= 360; 
+                            if (delta < -180) delta += 360;
                             currentBearing += delta;
                         }
                     }
+                    
                     lastKnownPosition = [lat, lon];
                     
                     if (!courierMarker) { courierMarker = L.circleMarker([lat, lon], { color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, radius: 8, pane: 'gpsPane' }).addTo(map); } 
@@ -709,11 +756,14 @@
                     
                     if (isFollowingGPS) { 
                         map.panTo([lat, lon]); 
+                        
                         if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) {
                             if (!lastRouteCalcPosition) { lastRouteCalcPosition = [lat, lon]; } 
                             else {
                                 const distMoved = map.distance([lat, lon], lastRouteCalcPosition);
-                                if (distMoved > 40) { lastRouteCalcPosition = [lat, lon]; recalculateRouteLine(false); }
+                                if (distMoved > 40) { 
+                                    lastRouteCalcPosition = [lat, lon]; recalculateRouteLine(false);
+                                }
                             }
                         }
                     }
@@ -727,7 +777,8 @@
                         if (currentClosestId !== closestPoint.id) {
                             alertDiv.innerHTML = `📍 Cel blisko (<span id="prox-dist">${Math.round(minDistance)}</span>m)<br><small>${shortAddr}</small>`;
                             alertDiv.onclick = function() { openActionModal(closestPoint.id); };
-                            alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id; updateAlertLift(); 
+                            alertDiv.classList.remove('hidden'); currentClosestId = closestPoint.id;
+                            updateAlertLift(); 
                         } else { const distSpan = document.getElementById('prox-dist'); if (distSpan) distSpan.innerText = Math.round(minDistance); }
                     } else { alertDiv.classList.add('hidden'); currentClosestId = null; }
                 },
@@ -737,7 +788,9 @@
         }
 
         renderSavedAddresses();
-        initCustomDragging(); // NOWOŚĆ: Uruchomienie autorskiego systemu sterowania mapą
+        
+        // Inicjalizacja nowych systemów
+        initCustomDragging(); 
         initAutomaticGPS();
     </script>
 </body>
