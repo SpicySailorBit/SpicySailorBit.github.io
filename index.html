@@ -10,18 +10,14 @@
     <style>
         body, html { margin: 0; padding: 0; height: 100%; font-family: Arial, sans-serif; overflow: hidden; background: #f8f9fa; }
         
-        /* ZMIANA: Dodany specjalny kontener-rodzic, który odpowiada za płynny obrót całego świata mapy */
-        #map-container {
-            width: 100%; height: 100vh; position: absolute; top: 0; left: 0; overflow: hidden;
-            transform: rotate(0deg);
-            will-change: transform;
-        }
-
-        /* Mapa jest teraz większa niż ekran, by podczas obrotów o 360 stopni nigdzie nie było widać białych rogów */
+        /* ZMIANA: Czysty kontener mapy, bez nakładania zbędnych warstw */
         #map { 
-            width: 180vmax; height: 180vmax; z-index: 1; 
+            width: 150vmax; height: 150vmax; z-index: 1; 
             position: absolute; top: 50%; left: 50%; 
-            transform: translate(-50%, -50%);
+            transform: translate(-50%, -50%) rotate(0deg);
+            touch-action: none; 
+            overscroll-behavior: none;
+            will-change: transform;
         }
         
         #ui-panel {
@@ -195,15 +191,13 @@
     <div id="proximity-alert" class="hidden"></div>
     <button id="center-btn" class="hidden" onclick="recenterMap()">🎯 Wyśrodkuj</button>
 
-    <div id="map-container">
-        <div id="map"></div>
-    </div>
+    <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <script>
-        // ZMIANA: dragging przywrócone na true. Leaflet sam zajmuje się przesuwaniem w 100% natywnie i stabilnie!
-        const map = L.map('map', { zoomControl: false, dragging: true, touchZoom: true }).setView([51.9194, 19.1451], 6);
+        // ZMIANA: Domyślne przesuwanie w Leaflet jest WYŁĄCZONE (dragging: false) - kontrolujemy to całkowicie sami.
+        const map = L.map('map', { zoomControl: false, dragging: false, touchZoom: true }).setView([51.9194, 19.1451], 6);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
 
         map.createPane('gpsPane');
@@ -483,6 +477,7 @@
                         <b>Kolejność: ${point.optLabel !== undefined ? point.optLabel : 'Brak'}</b><br>
                         <strong style="font-size:14px; color:#222;">${point.name}</strong><br>
                         ${point.description ? `<div style="margin-top:4px; padding: 4px; background:#f8f9fa; border-left: 3px solid #17a2b8; font-style: italic; color: #555;">📝 ${point.description}</div>` : ''}
+                        
                         <div style="margin-top: 10px;">
                             <button class="btn-info" style="padding: 8px; font-size: 14px; margin-bottom: 8px; width: 100%; background-color: #17a2b8;" onclick="setPriorityPoint(${point.id})">⭐ Priorytet</button>
                             ${point.status === 'pending' ? `
@@ -573,15 +568,80 @@
             }
         }
 
-        // ZMIANA: Kiedy kurier ręcznie przesunie mapę (drag), wyłączamy centrowanie GPS, ale NIE ZMIENIAMY obrotu!
-        map.on('dragstart', () => { 
+        function handleUserMapInteraction() {
             if (isFollowingGPS) {
                 isFollowingGPS = false;
                 document.getElementById('center-btn').classList.remove('hidden');
                 updateAlertLift();
             }
-        });
-        
+        }
+
+        // ZMIANA: Twarda Matematyka 2D. Wektor palca przekształcany przez kąt do standardowego punktu Leafleta.
+        function initCustomDragging() {
+            const mapDiv = document.getElementById('map');
+            let isDragging = false;
+            let dragLastX = 0, dragLastY = 0;
+            let dragRAF = null;
+            let activePointers = 0;
+
+            mapDiv.addEventListener('pointerdown', (e) => {
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
+                activePointers++;
+                
+                // Blokujemy nasze przesuwanie, jeżeli ktoś przykłada 2 palce (wtedy działa zoom Leafleta)
+                if (activePointers === 1) {
+                    isDragging = true;
+                    dragLastX = e.clientX;
+                    dragLastY = e.clientY;
+                    mapDiv.setPointerCapture(e.pointerId);
+                    handleUserMapInteraction();
+                } else {
+                    isDragging = false;
+                }
+            });
+
+            mapDiv.addEventListener('pointermove', (e) => {
+                if (!isDragging || activePointers !== 1) return;
+                e.preventDefault();
+
+                // 1. Zbieramy czysty ruch palca na fizycznym ekranie
+                let screenDx = e.clientX - dragLastX;
+                let screenDy = e.clientY - dragLastY;
+                
+                dragLastX = e.clientX;
+                dragLastY = e.clientY;
+
+                // 2. Przekształcamy ruch przez macierz obrotu dla aktualnego kąta
+                let rad = currentBearing * Math.PI / 180;
+                
+                // Formuła odwracająca ruch z ekranu na "północną" mapę pod spodem
+                let mapDx = screenDx * Math.cos(rad) - screenDy * Math.sin(rad);
+                let mapDy = screenDx * Math.sin(rad) + screenDy * Math.cos(rad);
+
+                // 3. Leaflet .panBy sam zarządza subpikselami
+                if (!dragRAF) {
+                    dragRAF = requestAnimationFrame(() => {
+                        // Przesuwamy widok - wektor w panBy musi być odwrotny do fizycznego ruchu "świata"
+                        map.panBy([-mapDx, -mapDy], { animate: false });
+                        dragRAF = null;
+                    });
+                }
+            });
+
+            function endPointer(e) {
+                activePointers = Math.max(0, activePointers - 1);
+                try { mapDiv.releasePointerCapture(e.pointerId); } catch(err) {}
+                
+                if (activePointers === 0) {
+                    isDragging = false;
+                    if (dragRAF) { cancelAnimationFrame(dragRAF); dragRAF = null; }
+                }
+            }
+
+            mapDiv.addEventListener('pointerup', endPointer);
+            mapDiv.addEventListener('pointercancel', endPointer);
+        }
+
         function recenterMap() { 
             isFollowingGPS = true; 
             document.getElementById('center-btn').classList.add('hidden'); 
@@ -591,7 +651,7 @@
 
         async function toggleDriveMode() {
             const btn = document.getElementById('track-btn');
-            const containerEl = document.getElementById('map-container');
+            const mapEl = document.getElementById('map');
 
             if (isDriveModeActive) {
                 isDriveModeActive = false;
@@ -603,9 +663,8 @@
                 updateAlertLift(); 
                 releaseWakeLock();
                 
-                // ZMIANA: Powrót kontenera do pionu
-                containerEl.style.transition = 'transform 0.5s ease-out';
-                containerEl.style.transform = `rotate(0deg)`;
+                mapEl.style.transition = 'transform 0.5s ease-out';
+                mapEl.style.transform = `translate(-50%, -50%) rotate(0deg)`;
             } else {
                 const routePoints = deliveryPoints.filter(p => p.status === 'pending');
                 if (routePoints.length > 0) {
@@ -625,9 +684,8 @@
                 
                 if (lastKnownPosition) map.setView(lastKnownPosition, 16);
                 
-                // ZMIANA: Obrócenie całego kontenera o dany kąt jazdy
-                containerEl.style.transition = 'transform 0.5s ease-out';
-                containerEl.style.transform = `rotate(${-currentBearing}deg)`;
+                mapEl.style.transition = 'transform 0.5s ease-out';
+                mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
                 
                 const content = document.getElementById('ui-content');
                 if (!content.classList.contains('hidden')) { togglePanel(); }
@@ -675,11 +733,10 @@
                         if (deliveryPoints.filter(p => p.status === 'pending').length >= 1) recalculateRouteLine(); 
                     }
                     
-                    // ZMIANA: Kontener nadrzędny obraca się zawsze, gdy tryb jazdy jest aktywny
                     if (isDriveModeActive) {
-                        const containerEl = document.getElementById('map-container');
-                        containerEl.style.transition = 'transform 0.5s ease-out';
-                        containerEl.style.transform = `rotate(${-currentBearing}deg)`;
+                        const mapEl = document.getElementById('map');
+                        mapEl.style.transition = 'transform 0.5s ease-out';
+                        mapEl.style.transform = `translate(-50%, -50%) rotate(${-currentBearing}deg)`;
                     }
                     
                     if (isFollowingGPS) { 
@@ -712,6 +769,7 @@
         }
 
         renderSavedAddresses();
+        initCustomDragging(); // Włączenie silnika dotyku
         initAutomaticGPS();
     </script>
 </body>
