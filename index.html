@@ -14,7 +14,6 @@
             width: 150vmax; height: 150vmax; z-index: 1; 
             position: absolute; top: 50%; left: 50%; 
             transform: translate(-50%, -50%) rotate(0deg);
-            /* ZMIANY: Wymuszenie płynności przez GPU i blokada domyślnego przewijania przeglądarki */
             touch-action: none; 
             overscroll-behavior: none;
             will-change: transform;
@@ -222,10 +221,10 @@
         let priorityPointId = null;
         let wakeLock = null;
 
-        // NOWOŚĆ: Wydajne zmienne akumulatora przesuwania (bez gubienia pamięci i bez klatkowania)
+        // NOWOŚĆ: Zmienne dla bezbłędnego geograficznego silnika przesuwania (Geographic Anchor Engine)
         let isCustomDragging = false;
-        let dragStartX = 0, dragStartY = 0;
-        let accumMapDx = 0, accumMapDy = 0;
+        let dragStartClientX = 0, dragStartClientY = 0;
+        let dragStartMapCenter = null; 
         let dragRAF = null;
 
         let currentEditingType = null; 
@@ -335,7 +334,7 @@
             const statsDiv = document.getElementById('route-stats');
             const km = (distance / 1000).toFixed(1); const hrs = Math.floor(duration / 3600); const mins = Math.floor((duration % 3600) / 60);
             let timeStr = ''; if (hrs > 0) timeStr += `${hrs}g `; timeStr += `${mins}m`;
-            statsDiv.innerHTML = `🛣️ Zostało: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
+            statsDiv.innerHTML = `¼ Dystans: <span style="color:#007bff">${km} km</span> | ⏱️ Czas: <span style="color:#28a745">${timeStr}</span>`;
             statsDiv.classList.remove('hidden');
         }
 
@@ -581,7 +580,7 @@
             }
         }
 
-        // ZMIANA: Totalnie przebudowany, zoptymalizowany dla GPU silnik przesuwania dotykiem (Akumulator Pikseli)
+        // ZMIANA: Bezbłędny, geograficzny silnik przesuwania mapy w 360° (Geographic Anchor Engine)
         function initCustomDragging() {
             const mapDiv = document.getElementById('map');
             let activePointers = new Map();
@@ -593,10 +592,11 @@
                 
                 if (activePointers.size === 1) {
                     isCustomDragging = true;
-                    dragStartX = e.clientX;
-                    dragStartY = e.clientY;
-                    accumMapDx = 0;
-                    accumMapDy = 0;
+                    dragStartClientX = e.clientX;
+                    dragStartClientY = e.clientY;
+                    
+                    // ZAPISUJEMY PUNKT STARTOWY bezpośrednio jako koordynaty geograficzne świata
+                    dragStartMapCenter = map.getCenter(); 
                     
                     mapDiv.setPointerCapture(e.pointerId);
                     handleUserMapInteraction();
@@ -610,38 +610,33 @@
                     activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
                 }
 
-                if (!isCustomDragging || activePointers.size !== 1) return;
+                if (!isCustomDragging || activePointers.size !== 1 || !dragStartMapCenter) return;
                 e.preventDefault();
 
-                let screenDx = e.clientX - dragStartX;
-                let screenDy = e.clientY - dragStartY;
-                
-                dragStartX = e.clientX;
-                dragStartY = e.clientY;
+                // 1. Obliczamy fizyczne przesunięcie palca na ekranie telefonu w pikselach
+                let screenDx = e.clientX - dragStartClientX;
+                let screenDy = e.clientY - dragStartClientY;
 
+                // 2. Korygujemy przesunięcie o aktualną matrycę obrotu samochodu
                 let angleRad = currentBearing * Math.PI / 180;
-                
-                // Rotacja przesuwania o aktualny obrót mapy
-                let mapDx = screenDx * Math.cos(angleRad) - screenDy * Math.sin(angleRad);
-                let mapDy = screenDx * Math.sin(angleRad) + screenDy * Math.cos(angleRad);
+                let rotatedDx = screenDx * Math.cos(angleRad) - screenDy * Math.sin(angleRad);
+                let rotatedDy = screenDx * Math.sin(angleRad) + screenDy * Math.cos(angleRad);
 
-                accumMapDx += mapDx;
-                accumMapDy += mapDy;
-
-                // Używamy TYLKO całkowitych pikseli (Leaflet optymalizuje to sprzętowo w CSS)
-                let moveX = Math.round(accumMapDx);
-                let moveY = Math.round(accumMapDy);
-
-                if (moveX !== 0 || moveY !== 0) {
-                    accumMapDx -= moveX;
-                    accumMapDy -= moveY;
-                    
-                    if (!dragRAF) {
-                        dragRAF = requestAnimationFrame(() => {
-                            map.panBy([-moveX, -moveY], { animate: false });
-                            dragRAF = null;
-                        });
-                    }
+                if (!dragRAF) {
+                    dragRAF = requestAnimationFrame(() => {
+                        // 3. Zamieniamy punkt geograficzny na piksele Leafleta (względem aktualnego Zoomu)
+                        let centerContainerPoint = map.project(dragStartMapCenter, map.getZoom());
+                        
+                        // 4. Przesuwamy wirtualny punkt o skorygowany wektor obrotu
+                        centerContainerPoint.x -= rotatedDx;
+                        centerContainerPoint.y -= rotatedDy;
+                        
+                        // 5. Tłumaczymy piksele z powrotem na czyste współrzędne geograficzne i ustawiamy widok
+                        let newMapCenterLatLon = map.unproject(centerContainerPoint, map.getZoom());
+                        map.setView(newMapCenterLatLon, map.getZoom(), { animate: false });
+                        
+                        dragRAF = null;
+                    });
                 }
             });
 
@@ -652,10 +647,9 @@
                 if (activePointers.size === 1) {
                     isCustomDragging = true;
                     let remaining = Array.from(activePointers.values())[0];
-                    dragStartX = remaining.x;
-                    dragStartY = remaining.y;
-                    accumMapDx = 0;
-                    accumMapDy = 0;
+                    dragStartClientX = remaining.x;
+                    dragStartClientY = remaining.y;
+                    dragStartMapCenter = map.getCenter(); // Odświeżamy kotwicę świata dla pozostałego palca
                 } else {
                     isCustomDragging = false;
                     if (dragRAF) { cancelAnimationFrame(dragRAF); dragRAF = null; }
