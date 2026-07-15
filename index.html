@@ -2756,3 +2756,765 @@
 
       game.parcels.forEach((
 
+      parcel) => {
+        if (parcel.collected) return;
+
+        const parcelBox = {
+          x: parcel.x - 15,
+          y: parcel.y - 15,
+          w: 30,
+          h: 30
+        };
+
+        if (rectanglesOverlap(player, parcelBox)) {
+          parcel.collected = true;
+          game.collected += 1;
+          game.score += 100;
+          spawnParticles(parcel.x, parcel.y, "#d8ad63", 10);
+          updateGameStats();
+        }
+      });
+
+      game.enemies.forEach((enemy) => {
+        if (!enemy.alive) return;
+
+        enemy.x += enemy.speed * enemy.direction * delta;
+
+        if (enemy.x <= enemy.minX) {
+          enemy.x = enemy.minX;
+          enemy.direction = 1;
+        } else if (enemy.x + enemy.w >= enemy.maxX) {
+          enemy.x = enemy.maxX - enemy.w;
+          enemy.direction = -1;
+        }
+
+        if (!rectanglesOverlap(player, enemy)) return;
+
+        const previousBottom = player.previousY + player.h;
+        const landedOnEnemy =
+          player.vy > 0 &&
+          previousBottom <= enemy.y + enemy.h * 0.45;
+
+        if (landedOnEnemy) {
+          enemy.alive = false;
+          player.y = enemy.y - player.h;
+          player.vy = -390;
+          game.score += 250;
+          spawnParticles(
+            enemy.x + enemy.w / 2,
+            enemy.y + enemy.h / 2,
+            "#9d7059",
+            12
+          );
+          updateGameStats();
+        } else {
+          loseLife();
+          return;
+        }
+      });
+
+      game.particles.forEach((particle) => {
+        particle.x += particle.vx * delta;
+        particle.y += particle.vy * delta;
+        particle.vy += 520 * delta;
+        particle.life -= delta;
+      });
+
+      game.particles = game.particles.filter(
+        (particle) => particle.life > 0
+      );
+
+      const goalTrigger = {
+        x: game.goal.x - 12,
+        y: game.goal.y,
+        w: 70,
+        h: game.goal.h
+      };
+
+      if (rectanglesOverlap(player, goalTrigger)) {
+        const parcelBonus = game.collected * 100;
+        const completionBonus = 1000;
+        game.score += completionBonus;
+
+        if (game.collected === game.parcels.length) {
+          game.score += 500;
+        }
+
+        updateGameStats();
+
+        showGameOverlay(
+          "Route complete!",
+          `You delivered ${game.collected} of ${game.parcels.length} parcels and earned ${game.score} points. Parcel bonus: ${parcelBonus}.`,
+          "Play again"
+        );
+
+        return;
+      }
+
+      const desiredCamera =
+        player.x - game.canvas.width * 0.38;
+
+      const maximumCamera =
+        game.worldWidth - game.canvas.width;
+
+      game.cameraX +=
+        (Math.max(0, Math.min(maximumCamera, desiredCamera)) -
+          game.cameraX) *
+        Math.min(1, delta * 6);
+    }
+
+    function roundedRectangle(
+      context,
+      x,
+      y,
+      width,
+      height,
+      radius
+    ) {
+      const safeRadius = Math.min(
+        radius,
+        width / 2,
+        height / 2
+      );
+
+      context.beginPath();
+      context.moveTo(x + safeRadius, y);
+      context.lineTo(x + width - safeRadius, y);
+      context.quadraticCurveTo(
+        x + width,
+        y,
+        x + width,
+        y + safeRadius
+      );
+      context.lineTo(x + width, y + height - safeRadius);
+      context.quadraticCurveTo(
+        x + width,
+        y + height,
+        x + width - safeRadius,
+        y + height
+      );
+      context.lineTo(x + safeRadius, y + height);
+      context.quadraticCurveTo(
+        x,
+        y + height,
+        x,
+        y + height - safeRadius
+      );
+      context.lineTo(x, y + safeRadius);
+      context.quadraticCurveTo(x, y, x + safeRadius, y);
+      context.closePath();
+    }
+
+    function drawCloud(context, x, y, scale = 1) {
+      context.save();
+      context.translate(x, y);
+      context.scale(scale, scale);
+      context.fillStyle = "rgba(242, 244, 237, 0.72)";
+
+      context.beginPath();
+      context.arc(0, 13, 20, 0, Math.PI * 2);
+      context.arc(24, 1, 27, 0, Math.PI * 2);
+      context.arc(52, 13, 20, 0, Math.PI * 2);
+      context.fillRect(0, 13, 52, 20);
+      context.fill();
+      context.restore();
+    }
+
+    function drawBackground(context) {
+      const width = game.canvas.width;
+      const height = game.canvas.height;
+      const camera = game.cameraX;
+
+      const sky = context.createLinearGradient(
+        0,
+        0,
+        0,
+        height
+      );
+
+      sky.addColorStop(0, "#9eb9b4");
+      sky.addColorStop(0.72, "#cbd2c5");
+      sky.addColorStop(1, "#d8d7c7");
+
+      context.fillStyle = sky;
+      context.fillRect(0, 0, width, height);
+
+      context.fillStyle = "rgba(245, 230, 185, 0.55)";
+      context.beginPath();
+      context.arc(790, 92, 42, 0, Math.PI * 2);
+      context.fill();
+
+      const cloudOffset = (camera * 0.12) % 1200;
+      drawCloud(context, 120 - cloudOffset, 90, 1.1);
+      drawCloud(context, 610 - cloudOffset, 145, 0.75);
+      drawCloud(context, 1080 - cloudOffset, 80, 1.2);
+      drawCloud(context, 1570 - cloudOffset, 130, 0.9);
+
+      context.save();
+      context.translate(-(camera * 0.18), 0);
+
+      context.fillStyle = "#8fa59a";
+      for (let index = -1; index < 8; index += 1) {
+        const x = index * 440;
+
+        context.beginPath();
+        context.moveTo(x, 445);
+        context.quadraticCurveTo(
+          x + 100,
+          250,
+          x + 225,
+          445
+        );
+        context.quadraticCurveTo(
+          x + 335,
+          305,
+          x + 450,
+          445
+        );
+        context.closePath();
+        context.fill();
+      }
+
+      context.restore();
+
+      context.save();
+      context.translate(-(camera * 0.34), 0);
+      context.fillStyle = "#718c80";
+
+      for (let index = -1; index < 12; index += 1) {
+        const x = index * 285;
+
+        context.beginPath();
+        context.moveTo(x, 445);
+        context.quadraticCurveTo(
+          x + 72,
+          330,
+          x + 145,
+          445
+        );
+        context.quadraticCurveTo(
+          x + 215,
+          350,
+          x + 290,
+          445
+        );
+        context.closePath();
+        context.fill();
+      }
+
+      context.restore();
+    }
+
+    function drawPlatform(context, platform) {
+      const x = platform.x - game.cameraX;
+
+      if (
+        x + platform.w < -20 ||
+        x > game.canvas.width + 20
+      ) {
+        return;
+      }
+
+      context.fillStyle = "#405b52";
+      context.fillRect(
+        x,
+        platform.y,
+        platform.w,
+        platform.h
+      );
+
+      context.fillStyle = "#698276";
+      context.fillRect(
+        x,
+        platform.y,
+        platform.w,
+        Math.min(13, platform.h)
+      );
+
+      context.fillStyle = "rgba(255, 255, 255, 0.11)";
+      context.fillRect(
+        x,
+        platform.y + 3,
+        platform.w,
+        3
+      );
+
+      context.strokeStyle = "rgba(29, 44, 39, 0.22)";
+      context.lineWidth = 2;
+
+      const blockSize = 38;
+
+      for (
+        let blockX = x;
+        blockX < x + platform.w;
+        blockX += blockSize
+      ) {
+        context.beginPath();
+        context.moveTo(blockX, platform.y + 13);
+        context.lineTo(
+          blockX,
+          platform.y + platform.h
+        );
+        context.stroke();
+      }
+
+      for (
+        let blockY = platform.y + 48;
+        blockY < platform.y + platform.h;
+        blockY += 35
+      ) {
+        context.beginPath();
+        context.moveTo(x, blockY);
+        context.lineTo(x + platform.w, blockY);
+        context.stroke();
+      }
+    }
+
+    function drawParcel(context, parcel, time) {
+      if (parcel.collected) return;
+
+      const x = parcel.x - game.cameraX;
+
+      if (x < -50 || x > game.canvas.width + 50) {
+        return;
+      }
+
+      const bob = Math.sin(time * 0.004 + parcel.x) * 5;
+      const y = parcel.y + bob;
+
+      context.save();
+      context.translate(x, y);
+
+      context.fillStyle = "rgba(36, 48, 45, 0.18)";
+      context.beginPath();
+      context.ellipse(0, 20, 17, 5, 0, 0, Math.PI * 2);
+      context.fill();
+
+      context.rotate(Math.sin(time * 0.003 + parcel.x) * 0.05);
+
+      context.fillStyle = "#c9975e";
+      roundedRectangle(context, -15, -15, 30, 28, 4);
+      context.fill();
+
+      context.fillStyle = "#e3bc7e";
+      context.fillRect(-3, -15, 6, 28);
+      context.fillRect(-15, -4, 30, 5);
+
+      context.fillStyle = "#f4ead7";
+      context.fillRect(4, 3, 8, 7);
+
+      context.strokeStyle = "#765a3f";
+      context.lineWidth = 2;
+      roundedRectangle(context, -15, -15, 30, 28, 4);
+      context.stroke();
+
+      context.restore();
+    }
+
+    function drawEnemy(context, enemy, time) {
+      if (!enemy.alive) return;
+
+      const x = enemy.x - game.cameraX;
+
+      if (
+        x + enemy.w < -30 ||
+        x > game.canvas.width + 30
+      ) {
+        return;
+      }
+
+      const bounce =
+        Math.sin(time * 0.009 + enemy.x) * 1.5;
+
+      context.save();
+      context.translate(x, enemy.y + bounce);
+
+      context.fillStyle = "#76584b";
+      roundedRectangle(
+        context,
+        1,
+        7,
+        enemy.w - 2,
+        enemy.h - 7,
+        13
+      );
+      context.fill();
+
+      context.fillStyle = "#9d7059";
+      context.beginPath();
+      context.arc(
+        enemy.w / 2,
+        12,
+        enemy.w * 0.42,
+        Math.PI,
+        Math.PI * 2
+      );
+      context.fill();
+
+      context.fillStyle = "#f2ece1";
+      context.fillRect(9, 12, 6, 8);
+      context.fillRect(20, 12, 6, 8);
+
+      context.fillStyle = "#27332f";
+      context.fillRect(
+        enemy.direction > 0 ? 12 : 10,
+        15,
+        3,
+        4
+      );
+      context.fillRect(
+        enemy.direction > 0 ? 23 : 21,
+        15,
+        3,
+        4
+      );
+
+      context.fillStyle = "#344a43";
+      context.fillRect(2, enemy.h - 7, 13, 7);
+      context.fillRect(enemy.w - 15, enemy.h - 7, 13, 7);
+
+      context.restore();
+    }
+
+    function drawGoal(context, time) {
+      const x = game.goal.x - game.cameraX;
+
+      if (
+        x < -100 ||
+        x > game.canvas.width + 100
+      ) {
+        return;
+      }
+
+      context.fillStyle = "#374d46";
+      context.fillRect(
+        x,
+        game.goal.y,
+        9,
+        game.goal.h
+      );
+
+      context.fillStyle = "#d6d4c5";
+      context.beginPath();
+      context.arc(
+        x + 4.5,
+        game.goal.y,
+        10,
+        0,
+        Math.PI * 2
+      );
+      context.fill();
+
+      const wave = Math.sin(time * 0.005) * 5;
+
+      context.fillStyle = "#a56f58";
+      context.beginPath();
+      context.moveTo(x + 9, game.goal.y + 18);
+      context.lineTo(
+        x + 66 + wave,
+        game.goal.y + 35
+      );
+      context.lineTo(x + 9, game.goal.y + 61);
+      context.closePath();
+      context.fill();
+
+      context.fillStyle = "#f1e9da";
+      context.font = "bold 15px system-ui, sans-serif";
+      context.fillText(
+        "GO",
+        x + 20,
+        game.goal.y + 42
+      );
+
+      context.fillStyle = "#344a43";
+      context.fillRect(
+        x - 13,
+        game.goal.y + game.goal.h - 6,
+        35,
+        7
+      );
+    }
+
+    function drawPlayer(context, time) {
+      const player = game.player;
+      const x = player.x - game.cameraX;
+
+      if (
+        player.invulnerable > 0 &&
+        Math.floor(time / 80) % 2 === 0
+      ) {
+        return;
+      }
+
+      const walking =
+        player.grounded && Math.abs(player.vx) > 20;
+
+      const stride = walking
+        ? Math.sin(time * 0.018) * 4
+        : 0;
+
+      context.save();
+      context.translate(
+        x + player.w / 2,
+        player.y + player.h / 2
+      );
+      context.scale(player.facing, 1);
+      context.translate(
+        -player.w / 2,
+        -player.h / 2
+      );
+
+      context.fillStyle = "rgba(30, 43, 40, 0.2)";
+      context.beginPath();
+      context.ellipse(
+        player.w / 2,
+        player.h + 3,
+        16,
+        4,
+        0,
+        0,
+        Math.PI * 2
+      );
+      context.fill();
+
+      context.fillStyle = "#a46050";
+      roundedRectangle(context, 4, 0, 27, 12, 6);
+      context.fill();
+      context.fillRect(1, 8, 32, 5);
+
+      context.fillStyle = "#d8a47d";
+      roundedRectangle(context, 8, 10, 22, 18, 7);
+      context.fill();
+
+      context.fillStyle = "#513d34";
+      context.fillRect(23, 17, 9, 4);
+
+      context.fillStyle = "#26342f";
+      context.fillRect(22, 13, 3, 4);
+
+      context.fillStyle = "#526f65";
+      roundedRectangle(context, 6, 27, 24, 16, 5);
+      context.fill();
+
+      context.fillStyle = "#d6a078";
+      context.fillRect(1, 29, 7, 13);
+      context.fillRect(29, 29, 7, 13);
+
+      context.fillStyle = "#384c45";
+      context.fillRect(8, 40, 8, 8 + stride);
+      context.fillRect(
+        21,
+        40,
+        8,
+        8 - stride
+      );
+
+      context.fillStyle = "#47372f";
+      context.fillRect(
+        4,
+        45 + stride,
+        13,
+        5
+      );
+      context.fillRect(
+        20,
+        45 - stride,
+        13,
+        5
+      );
+
+      context.restore();
+    }
+
+    function drawParticles(context) {
+      game.particles.forEach((particle) => {
+        const x = particle.x - game.cameraX;
+        const alpha = Math.max(
+          0,
+          Math.min(1, particle.life)
+        );
+
+        context.globalAlpha = alpha;
+        context.fillStyle = particle.color;
+        context.fillRect(
+          x,
+          particle.y,
+          particle.size,
+          particle.size
+        );
+      });
+
+      context.globalAlpha = 1;
+    }
+
+    function drawGame(time = performance.now()) {
+      const context = game.context;
+
+      context.clearRect(
+        0,
+        0,
+        game.canvas.width,
+        game.canvas.height
+      );
+
+      drawBackground(context);
+
+      game.platforms.forEach((platform) => {
+        drawPlatform(context, platform);
+      });
+
+      game.parcels.forEach((parcel) => {
+        drawParcel(context, parcel, time);
+      });
+
+      game.enemies.forEach((enemy) => {
+        drawEnemy(context, enemy, time);
+      });
+
+      drawGoal(context, time);
+      drawParticles(context);
+      drawPlayer(context, time);
+
+      context.fillStyle = "rgba(38, 54, 50, 0.82)";
+      roundedRectangle(context, 18, 18, 186, 37, 10);
+      context.fill();
+
+      context.fillStyle = "#f1f1ea";
+      context.font = "700 14px system-ui, sans-serif";
+      context.fillText(
+        `PARCELS ${game.collected}/${game.parcels.length}`,
+        34,
+        42
+      );
+    }
+
+    function gameLoop(currentTime) {
+      if (!game.running) return;
+
+      const elapsed =
+        (currentTime - game.previousTime) / 1000;
+
+      const delta = Math.min(0.033, Math.max(0, elapsed));
+      game.previousTime = currentTime;
+
+      updateGame(delta);
+      drawGame(currentTime);
+
+      if (game.running) {
+        game.animationFrame =
+          requestAnimationFrame(gameLoop);
+      }
+    }
+
+    function updateGameKey(key, pressed) {
+      if (key === "ArrowLeft" || key === "a" || key === "A") {
+        game.keys.left = pressed;
+        return true;
+      }
+
+      if (
+        key === "ArrowRight" ||
+        key === "d" ||
+        key === "D"
+      ) {
+        game.keys.right = pressed;
+        return true;
+      }
+
+      if (
+        key === "ArrowUp" ||
+        key === "w" ||
+        key === "W" ||
+        key === " "
+      ) {
+        game.keys.jump = pressed;
+        return true;
+      }
+
+      return false;
+    }
+
+    window.addEventListener("keydown", (event) => {
+      if (state.activeView !== "game") return;
+
+      if (updateGameKey(event.key, true)) {
+        event.preventDefault();
+      }
+    });
+
+    window.addEventListener("keyup", (event) => {
+      if (state.activeView !== "game") return;
+
+      if (updateGameKey(event.key, false)) {
+        event.preventDefault();
+      }
+    });
+
+    window.addEventListener("blur", () => {
+      game.keys.left = false;
+      game.keys.right = false;
+      game.keys.jump = false;
+      game.jumpWasPressed = false;
+    });
+
+    document
+      .querySelectorAll("[data-game-key]")
+      .forEach((button) => {
+        const key = button.dataset.gameKey;
+
+        const press = (event) => {
+          event.preventDefault();
+          button.classList.add("pressed");
+          game.keys[key] = true;
+          game.canvas.focus({ preventScroll: true });
+        };
+
+        const release = (event) => {
+          event.preventDefault();
+          button.classList.remove("pressed");
+          game.keys[key] = false;
+        };
+
+        button.addEventListener("pointerdown", press);
+        button.addEventListener("pointerup", release);
+        button.addEventListener("pointercancel", release);
+        button.addEventListener("pointerleave", release);
+        button.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+        });
+      });
+
+    game.startButton.addEventListener("click", () => {
+      startGame(true);
+    });
+
+    game.restartButton.addEventListener("click", () => {
+      startGame(true);
+    });
+
+    game.canvas.addEventListener("click", () => {
+      game.canvas.focus({ preventScroll: true });
+    });
+
+    /* =========================================================
+       Initial application render
+       ========================================================= */
+
+    restoreStoredData();
+    renderSavedAddresses();
+    renderRouteStops();
+    clearRouteResult();
+    renderView(viewFromURL());
+
+    window.addEventListener("pageshow", () => {
+      const requestedView = viewFromURL();
+
+      if (requestedView !== state.activeView) {
+        renderView(requestedView);
+      }
+    });
+  </script>
+</body>
+</html>
+
+
