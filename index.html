@@ -1328,3 +1328,1431 @@
         </div>
 
         <div class="canvas-wrap">
+
+                    <canvas
+            id="gameCanvas"
+            width="960"
+            height="520"
+            tabindex="0"
+            aria-label="Mario-inspired parcel platform game"
+          ></canvas>
+
+          <div id="gameOverlay" class="game-overlay">
+            <div class="game-dialog">
+              <h2 id="gameOverlayTitle">Parcel Run</h2>
+              <p id="gameOverlayText">
+                Collect parcels, avoid delivery hazards and reach the dispatch flag.
+              </p>
+
+              <div class="game-help">
+                <kbd>←</kbd>
+                <kbd>→</kbd>
+                <kbd>W</kbd>
+                <kbd>↑</kbd>
+                <kbd>Space</kbd>
+              </div>
+
+              <button id="startGameButton" class="button button-warm" type="button">
+                Start game
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="touch-controls" aria-label="Touch game controls">
+          <button class="touch-button" data-game-key="left" type="button" aria-label="Move left">
+            ← Left
+          </button>
+          <button class="touch-button" data-game-key="right" type="button" aria-label="Move right">
+            Right →
+          </button>
+          <button class="touch-button" data-game-key="jump" type="button" aria-label="Jump">
+            ↑ Jump
+          </button>
+        </div>
+
+        <p class="game-note">
+          Keyboard: arrow keys or A/D to move; W, Up Arrow or Space to jump.
+        </p>
+      </article>
+    </section>
+  </main>
+
+  <footer class="footer app-shell">
+    RouteNest stores address data locally in your browser. Always confirm route
+    conditions using an approved navigation service.
+  </footer>
+
+  <div
+    id="toastRegion"
+    class="toast-region"
+    role="status"
+    aria-live="polite"
+    aria-atomic="true"
+  ></div>
+
+  <script>
+    "use strict";
+
+    /* =========================================================
+       Shared utilities
+       ========================================================= */
+
+    const STORAGE_KEY = "routenest-saved-addresses-v1";
+    const ROUTE_STORAGE_KEY = "routenest-current-route-v1";
+
+    const state = {
+      savedAddresses: [],
+      routeStops: [],
+      routeResult: null,
+      activeView: "courier"
+    };
+
+    const elements = {
+      courierView: document.getElementById("courierView"),
+      gameView: document.getElementById("gameView"),
+      viewLinks: [...document.querySelectorAll("[data-view-link]")],
+      serviceStatus: document.getElementById("serviceStatus"),
+
+      addressForm: document.getElementById("addressForm"),
+      addressLabel: document.getElementById("addressLabel"),
+      addressText: document.getElementById("addressText"),
+      saveAddressButton: document.getElementById("saveAddressButton"),
+      currentLocationButton: document.getElementById("currentLocationButton"),
+
+      savedAddressList: document.getElementById("savedAddressList"),
+      savedCount: document.getElementById("savedCount"),
+      addSelectedButton: document.getElementById("addSelectedButton"),
+      selectAllButton: document.getElementById("selectAllButton"),
+
+      routeList: document.getElementById("routeList"),
+      routeCount: document.getElementById("routeCount"),
+      buildRouteButton: document.getElementById("buildRouteButton"),
+      optimizeButton: document.getElementById("optimizeButton"),
+      openNavigationButton: document.getElementById("openNavigationButton"),
+      clearRouteButton: document.getElementById("clearRouteButton"),
+
+      routeMap: document.getElementById("routeMap"),
+      mapPlaceholder: document.getElementById("mapPlaceholder"),
+      distanceMetric: document.getElementById("distanceMetric"),
+      durationMetric: document.getElementById("durationMetric"),
+      stopsMetric: document.getElementById("stopsMetric"),
+      directionsWrap: document.getElementById("directionsWrap"),
+      directionsList: document.getElementById("directionsList"),
+
+      toastRegion: document.getElementById("toastRegion")
+    };
+
+    function createId() {
+      if (window.crypto && typeof crypto.randomUUID === "function") {
+        return crypto.randomUUID();
+      }
+
+      return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function showToast(message, type = "success") {
+      const toast = document.createElement("div");
+      toast.className = `toast ${type}`;
+      toast.textContent = message;
+      elements.toastRegion.appendChild(toast);
+
+      window.setTimeout(() => {
+        toast.remove();
+      }, 4200);
+    }
+
+    function setServiceStatus(message, working = false) {
+      elements.serviceStatus.textContent = message;
+
+      const dot = document.querySelector(".status-dot");
+      if (dot) {
+        dot.style.background = working ? "#b48a45" : "#6f9378";
+      }
+    }
+
+    function setButtonLoading(button, loading, label) {
+      if (!button.dataset.originalLabel) {
+        button.dataset.originalLabel = button.innerHTML;
+      }
+
+      button.disabled = loading;
+
+      if (loading) {
+        button.innerHTML = `<span class="loader" aria-hidden="true"></span><span>${label}</span>`;
+      } else {
+        button.innerHTML = button.dataset.originalLabel;
+      }
+    }
+
+    function formatDistance(meters) {
+      if (!Number.isFinite(meters)) return "—";
+      if (meters < 1000) return `${Math.round(meters)} m`;
+      return `${(meters / 1000).toFixed(meters < 10000 ? 1 : 0)} km`;
+    }
+
+    function formatDuration(seconds) {
+      if (!Number.isFinite(seconds)) return "—";
+
+      const totalMinutes = Math.round(seconds / 60);
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+
+      if (hours === 0) return `${minutes} min`;
+      if (minutes === 0) return `${hours} hr`;
+      return `${hours} hr ${minutes} min`;
+    }
+
+    function persistSavedAddresses() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.savedAddresses));
+    }
+
+    function persistRouteStops() {
+      localStorage.setItem(ROUTE_STORAGE_KEY, JSON.stringify(state.routeStops));
+    }
+
+    function restoreStoredData() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+        const route = JSON.parse(localStorage.getItem(ROUTE_STORAGE_KEY) || "[]");
+
+        state.savedAddresses = Array.isArray(saved) ? saved : [];
+        state.routeStops = Array.isArray(route) ? route : [];
+      } catch (error) {
+        console.warn("Could not restore locally saved data.", error);
+        state.savedAddresses = [];
+        state.routeStops = [];
+      }
+    }
+
+    /* =========================================================
+       Navigation API and hash fallback
+       ========================================================= */
+
+    function viewFromURL(urlValue = window.location.href) {
+      let hash = "#courier";
+
+      try {
+        hash = new URL(urlValue, window.location.href).hash || "#courier";
+      } catch {
+        hash = window.location.hash || "#courier";
+      }
+
+      return hash === "#game" ? "game" : "courier";
+    }
+
+    function renderView(viewName) {
+      const view = viewName === "game" ? "game" : "courier";
+      state.activeView = view;
+
+      elements.courierView.hidden = view !== "courier";
+      elements.gameView.hidden = view !== "game";
+
+      elements.viewLinks.forEach((link) => {
+        const active = link.dataset.viewLink === view;
+        link.classList.toggle("active", active);
+
+        if (active) {
+          link.setAttribute("aria-current", "page");
+        } else {
+          link.removeAttribute("aria-current");
+        }
+      });
+
+      document.title =
+        view === "game"
+          ? "Mini Mario: Parcel Run | RouteNest"
+          : "RouteNest Courier Assistant";
+
+      if (view === "game") {
+        initializeGame();
+        requestAnimationFrame(() => {
+          game.canvas.focus({ preventScroll: true });
+        });
+      } else {
+        game.keys.left = false;
+        game.keys.right = false;
+        game.keys.jump = false;
+      }
+
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    if ("navigation" in window) {
+      navigation.addEventListener("navigate", (event) => {
+        const destination = new URL(event.destination.url);
+        const current = new URL(window.location.href);
+
+        if (destination.origin !== current.origin ||
+            destination.pathname !== current.pathname) {
+          return;
+        }
+
+        const destinationView = viewFromURL(destination.href);
+
+        if (event.canIntercept) {
+          event.intercept({
+            scroll: "manual",
+            handler: async () => {
+              renderView(destinationView);
+            }
+          });
+        }
+      });
+    } else {
+      window.addEventListener("hashchange", () => {
+        renderView(viewFromURL());
+      });
+    }
+
+    elements.viewLinks.forEach((link) => {
+      link.addEventListener("click", (event) => {
+        if ("navigation" in window) return;
+
+        event.preventDefault();
+        const target = link.getAttribute("href");
+
+        if (window.location.hash === target) {
+          renderView(viewFromURL());
+        } else {
+          window.location.hash = target;
+        }
+      });
+    });
+
+    /* =========================================================
+       Geocoding
+       ========================================================= */
+
+    async function geocodeAddress(address) {
+      const endpoint = new URL("https://nominatim.openstreetmap.org/search");
+      endpoint.searchParams.set("q", address);
+      endpoint.searchParams.set("format", "jsonv2");
+      endpoint.searchParams.set("limit", "1");
+      endpoint.searchParams.set("addressdetails", "1");
+
+      const response = await fetch(endpoint.toString(), {
+        headers: {
+          Accept: "application/json",
+          "Accept-Language": navigator.language || "en"
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Geocoding failed with status ${response.status}.`);
+      }
+
+      const results = await response.json();
+
+      if (!Array.isArray(results) || results.length === 0) {
+        throw new Error("No matching location was found.");
+      }
+
+      return {
+        lat: Number(results[0](0).lat),
+        lon: Number(results[0](0).lon),
+        displayName: results[0](0).display_name || address
+      };
+    }
+
+    async function reverseGeocode(lat, lon) {
+      const endpoint = new URL("https://nominatim.openstreetmap.org/reverse");
+      endpoint.searchParams.set("lat", String(lat));
+      endpoint.searchParams.set("lon", String(lon));
+      endpoint.searchParams.set("format", "jsonv2");
+      endpoint.searchParams.set("zoom", "18");
+
+      const response = await fetch(endpoint.toString(), {
+        headers: {
+          Accept: "application/json",
+          "Accept-Language": navigator.language || "en"
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error("Reverse geocoding was unavailable.");
+      }
+
+      const result = await response.json();
+      return result.display_name || `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+    }
+
+    elements.addressForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const label = elements.addressLabel.value.trim();
+      const address = elements.addressText.value.trim();
+
+      if (!label || !address) {
+        showToast("Enter both a reference name and a full address.", "error");
+        return;
+      }
+
+      setButtonLoading(elements.saveAddressButton, true, "Finding address");
+      setServiceStatus("Geocoding address…", true);
+
+      try {
+        const location = await geocodeAddress(address);
+
+        state.savedAddresses.push({
+          id: createId(),
+          label,
+          address: location.displayName,
+          lat: location.lat,
+          lon: location.lon
+        });
+
+        persistSavedAddresses();
+        renderSavedAddresses();
+        elements.addressForm.reset();
+
+        showToast("Address saved successfully.");
+        setServiceStatus("Address saved");
+      } catch (error) {
+        console.error(error);
+        showToast(
+          error.message || "The address could not be located.",
+          "error"
+        );
+        setServiceStatus("Geocoding unavailable");
+      } finally {
+        setButtonLoading(elements.saveAddressButton, false);
+      }
+    });
+
+    elements.currentLocationButton.addEventListener("click", () => {
+      if (!navigator.geolocation) {
+        showToast("Geolocation is not supported by this browser.", "error");
+        return;
+      }
+
+      setButtonLoading(
+        elements.currentLocationButton,
+        true,
+        "Locating"
+      );
+      setServiceStatus("Requesting your position…", true);
+
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+
+          try {
+            const address = await reverseGeocode(lat, lon);
+            elements.addressLabel.value =
+              elements.addressLabel.value.trim() || "Current location";
+            elements.addressText.value = address;
+            elements.addressText.dataset.lat = String(lat);
+            elements.addressText.dataset.lon = String(lon);
+
+            showToast("Current location added to the form.");
+            setServiceStatus("Location found");
+          } catch {
+            elements.addressLabel.value =
+              elements.addressLabel.value.trim() || "Current location";
+            elements.addressText.value =
+              `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+
+            showToast("Coordinates added; the street address was unavailable.");
+            setServiceStatus("Coordinates found");
+          } finally {
+            setButtonLoading(elements.currentLocationButton, false);
+          }
+        },
+        (error) => {
+          const messages = {
+            1: "Location permission was denied.",
+            2: "Your location is currently unavailable.",
+            3: "The location request timed out."
+          };
+
+          showToast(
+            messages[error.code] || "Could not determine your location.",
+            "error"
+          );
+          setServiceStatus("Location unavailable");
+          setButtonLoading(elements.currentLocationButton, false);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 12000,
+          maximumAge: 60000
+        }
+      );
+    });
+
+    /* =========================================================
+       Saved-address interface
+       ========================================================= */
+
+    function renderSavedAddresses() {
+      elements.savedAddressList.replaceChildren();
+      elements.savedCount.textContent = state.savedAddresses.length;
+
+      if (state.savedAddresses.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "empty-state";
+        empty.innerHTML = `
+          <div>
+            <strong>No saved addresses yet</strong>
+            Add your first customer or depot address above.
+          </div>
+        `;
+        elements.savedAddressList.appendChild(empty);
+        return;
+      }
+
+      state.savedAddresses.forEach((address) => {
+        const item = document.createElement("li");
+        item.className = "saved-address";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = address.id;
+        checkbox.setAttribute(
+          "aria-label",
+          `Select ${address.label}`
+        );
+
+        const copy = document.createElement("div");
+        copy.className = "address-copy";
+
+        const title = document.createElement("strong");
+        title.textContent = address.label;
+
+        const subtitle = document.createElement("span");
+        subtitle.textContent = address.address;
+
+        copy.append(title, subtitle);
+
+        const removeButton = document.createElement("button");
+        removeButton.type = "button";
+        removeButton.className = "icon-button";
+        removeButton.textContent = "×";
+        removeButton.title = `Delete ${address.label}`;
+        removeButton.setAttribute(
+          "aria-label",
+          `Delete ${address.label}`
+        );
+
+        removeButton.addEventListener("click", () => {
+          state.savedAddresses = state.savedAddresses.filter(
+            (entry) => entry.id !== address.id
+          );
+
+          persistSavedAddresses();
+          renderSavedAddresses();
+          showToast("Saved address removed.");
+        });
+
+        item.append(checkbox, copy, removeButton);
+        elements.savedAddressList.appendChild(item);
+      });
+    }
+
+    elements.selectAllButton.addEventListener("click", () => {
+      const checkboxes = [
+        ...elements.savedAddressList.querySelectorAll(
+          'input[type="checkbox"]'
+        )
+      ];
+
+      if (checkboxes.length === 0) return;
+
+      const shouldSelect = checkboxes.some((checkbox) => !checkbox.checked);
+      checkboxes.forEach((checkbox) => {
+        checkbox.checked = shouldSelect;
+      });
+
+      elements.selectAllButton.textContent =
+        shouldSelect ? "Clear selection" : "Select all";
+    });
+
+    elements.addSelectedButton.addEventListener("click", () => {
+      const selectedIds = [
+        ...elements.savedAddressList.querySelectorAll(
+          'input[type="checkbox"]:checked'
+        )
+      ].map((checkbox) => checkbox.value);
+
+      if (selectedIds.length === 0) {
+        showToast("Select at least one saved address.", "error");
+        return;
+      }
+
+      let added = 0;
+
+      selectedIds.forEach((id) => {
+        const address = state.savedAddresses.find(
+          (entry) => entry.id === id
+        );
+
+        const alreadyAdded = state.routeStops.some(
+          (entry) => entry.id === id
+        );
+
+        if (address && !alreadyAdded) {
+          state.routeStops.push({ ...address });
+          added += 1;
+        }
+      });
+
+      persistRouteStops();
+      clearRouteResult();
+      renderRouteStops();
+      renderSavedAddresses();
+      elements.selectAllButton.textContent = "Select all";
+
+      if (added === 0) {
+        showToast("Those addresses are already in the route.", "error");
+      } else {
+        showToast(
+          `${added} ${added === 1 ? "stop" : "stops"} added to the route.`
+        );
+      }
+    });
+
+    /* =========================================================
+       Route-stop interface
+       ========================================================= */
+
+    function moveRouteStop(index, direction) {
+      const newIndex = index + direction;
+
+      if (newIndex < 0 || newIndex >= state.routeStops.length) {
+        return;
+      }
+
+      const [stop] = state.routeStops.splice(index, 1);
+      state.routeStops.splice(newIndex, 0, stop);
+
+      persistRouteStops();
+      clearRouteResult();
+      renderRouteStops();
+    }
+
+    function removeRouteStop(id) {
+      state.routeStops = state.routeStops.filter(
+        (entry) => entry.id !== id
+      );
+
+      persistRouteStops();
+      clearRouteResult();
+      renderRouteStops();
+    }
+
+    function renderRouteStops() {
+      elements.routeList.replaceChildren();
+      elements.routeCount.textContent = state.routeStops.length;
+      elements.stopsMetric.textContent = state.routeStops.length;
+
+      if (state.routeStops.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "empty-state";
+        empty.innerHTML = `
+          <div>
+            <strong>No route stops</strong>
+            Select saved addresses and add them to today's route.
+          </div>
+        `;
+        elements.routeList.appendChild(empty);
+        return;
+      }
+
+      state.routeStops.forEach((stop, index) => {
+        const item = document.createElement("li");
+        item.className = "route-stop";
+
+        const number = document.createElement("span");
+        number.className = "stop-number";
+        number.textContent = index + 1;
+
+        const copy = document.createElement("div");
+        copy.className = "address-copy";
+
+        const title = document.createElement("strong");
+        title.textContent = stop.label;
+
+        const subtitle = document.createElement("span");
+        subtitle.textContent = stop.address;
+
+        copy.append(title, subtitle);
+
+        const actions = document.createElement("div");
+        actions.className = "stop-actions";
+
+        const up = document.createElement("button");
+        up.className = "icon-button";
+        up.type = "button";
+        up.textContent = "↑";
+        up.title = "Move stop up";
+        up.setAttribute("aria-label", `Move ${stop.label} up`);
+        up.disabled = index === 0;
+        up.addEventListener("click", () => moveRouteStop(index, -1));
+
+        const down = document.createElement("button");
+        down.className = "icon-button";
+        down.type = "button";
+        down.textContent = "↓";
+        down.title = "Move stop down";
+        down.setAttribute("aria-label", `Move ${stop.label} down`);
+        down.disabled = index === state.routeStops.length - 1;
+        down.addEventListener("click", () => moveRouteStop(index, 1));
+
+        const remove = document.createElement("button");
+        remove.className = "icon-button";
+        remove.type = "button";
+        remove.textContent = "×";
+        remove.title = "Remove stop";
+        remove.setAttribute("aria-label", `Remove ${stop.label}`);
+        remove.addEventListener("click", () => removeRouteStop(stop.id));
+
+        actions.append(up, down, remove);
+        item.append(number, copy, actions);
+        elements.routeList.appendChild(item);
+      });
+    }
+
+    function clearRouteResult() {
+      state.routeResult = null;
+      elements.routeMap.replaceChildren();
+      elements.mapPlaceholder.hidden = false;
+      elements.distanceMetric.textContent = "—";
+      elements.durationMetric.textContent = "—";
+      elements.openNavigationButton.disabled = true;
+      elements.directionsWrap.hidden = true;
+      elements.directionsList.replaceChildren();
+    }
+
+    elements.clearRouteButton.addEventListener("click", () => {
+      state.routeStops = [];
+      persistRouteStops();
+      clearRouteResult();
+      renderRouteStops();
+      showToast("Route cleared.");
+    });
+
+    /* =========================================================
+       OSRM route calculation
+       ========================================================= */
+
+    function coordinatesForStops(stops = state.routeStops) {
+      return stops
+        .map((stop) => `${stop.lon},${stop.lat}`)
+        .join(";");
+    }
+
+    async function calculateRoute() {
+      if (state.routeStops.length < 2) {
+        showToast("Add at least two stops to calculate a route.", "error");
+        return;
+      }
+
+      setButtonLoading(
+        elements.buildRouteButton,
+        true,
+        "Calculating"
+      );
+      setServiceStatus("Calculating driving route…", true);
+
+      try {
+        const coordinates = coordinatesForStops();
+        const endpoint = new URL(
+          `https://router.project-osrm.org/route/v1/driving/${coordinates}`
+        );
+
+        endpoint.searchParams.set("overview", "full");
+        endpoint.searchParams.set("geometries", "geojson");
+        endpoint.searchParams.set("steps", "true");
+
+        const response = await fetch(endpoint.toString());
+
+        if (!response.ok) {
+          throw new Error(
+            `Routing service returned status ${response.status}.`
+          );
+        }
+
+        const result = await response.json();
+
+        if (
+          result.code !== "Ok" ||
+          !Array.isArray(result.routes) ||
+          !result.routes[0](0)
+        ) {
+          throw new Error(
+            result.message || "No drivable route was found."
+          );
+        }
+
+        state.routeResult = result.routes[0](0);
+        renderRouteResult(state.routeResult);
+
+        setServiceStatus("Route calculated");
+        showToast("Driving route calculated.");
+      } catch (error) {
+        console.error(error);
+        setServiceStatus("Routing service unavailable");
+        showToast(
+          error.message || "The route could not be calculated.",
+          "error"
+        );
+      } finally {
+        setButtonLoading(elements.buildRouteButton, false);
+      }
+    }
+
+    async function optimizeRoute() {
+      if (state.routeStops.length < 3) {
+        showToast(
+          "Add at least three stops before optimizing the order.",
+          "error"
+        );
+        return;
+      }
+
+      setButtonLoading(
+        elements.optimizeButton,
+        true,
+        "Optimizing"
+      );
+      setServiceStatus("Optimizing stop order…", true);
+
+      try {
+        const originalStops = [...state.routeStops];
+        const coordinates = coordinatesForStops(originalStops);
+        const endpoint = new URL(
+          `https://router.project-osrm.org/trip/v1/driving/${coordinates}`
+        );
+
+        endpoint.searchParams.set("source", "first");
+        endpoint.searchParams.set("roundtrip", "false");
+        endpoint.searchParams.set("overview", "false");
+        endpoint.searchParams.set("steps", "false");
+
+        const response = await fetch(endpoint.toString());
+
+        if (!response.ok) {
+          throw new Error(
+            `Optimization service returned status ${response.status}.`
+          );
+        }
+
+        const result = await response.json();
+
+        if (
+          result.code !== "Ok" ||
+          !Array.isArray(result.waypoints)
+        ) {
+          throw new Error(
+            result.message || "The route could not be optimized."
+          );
+        }
+
+        const reordered = new Array(originalStops.length);
+
+        result.waypoints.forEach((waypoint, inputIndex) => {
+          reordered[waypoint.waypoint_index] = originalStops[inputIndex];
+        });
+
+        if (reordered.some((entry) => !entry)) {
+          throw new Error("The optimized stop order was incomplete.");
+        }
+
+        state.routeStops = reordered;
+        persistRouteStops();
+        clearRouteResult();
+        renderRouteStops();
+
+        showToast("Stops reordered for a shorter journey.");
+        setServiceStatus("Stop order optimized");
+
+        await calculateRoute();
+      } catch (error) {
+        console.error(error);
+        setServiceStatus("Optimization unavailable");
+        showToast(
+          error.message || "The route could not be optimized.",
+          "error"
+        );
+      } finally {
+        setButtonLoading(elements.optimizeButton, false);
+      }
+    }
+
+    elements.buildRouteButton.addEventListener(
+      "click",
+      calculateRoute
+    );
+
+    elements.optimizeButton.addEventListener(
+      "click",
+      optimizeRoute
+    );
+
+    /* =========================================================
+       Route visualization and directions
+       ========================================================= */
+
+    const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+
+    function createSVGElement(name, attributes = {}) {
+      const element = document.createElementNS(
+        SVG_NAMESPACE,
+        name
+      );
+
+      Object.entries(attributes).forEach(([key, value]) => {
+        element.setAttribute(key, value);
+      });
+
+      return element;
+    }
+
+    function renderRouteMap(coordinates) {
+      elements.routeMap.replaceChildren();
+
+      if (!Array.isArray(coordinates) || coordinates.length < 2) {
+        elements.mapPlaceholder.hidden = false;
+        return;
+      }
+
+      const width = 900;
+      const height = 460;
+      const padding = 52;
+
+      const longitudes = coordinates.map((coordinate) => coordinate[0](0));
+      const latitudes = coordinates.map((coordinate) => coordinate[1](1));
+
+      let minLon = Math.min(...longitudes);
+      let maxLon = Math.max(...longitudes);
+      let minLat = Math.min(...latitudes);
+      let maxLat = Math.max(...latitudes);
+
+      if (minLon === maxLon) {
+        minLon -= 0.005;
+        maxLon += 0.005;
+      }
+
+      if (minLat === maxLat) {
+        minLat -= 0.005;
+        maxLat += 0.005;
+      }
+
+      const project = ([lon, lat]) => {
+        const x =
+          padding +
+          ((lon - minLon) / (maxLon - minLon)) *
+            (width - padding * 2);
+
+        const y =
+          height -
+          padding -
+          ((lat - minLat) / (maxLat - minLat)) *
+            (height - padding * 2);
+
+        return [x, y];
+      };
+
+      const projectedRoute = coordinates.map(project);
+      const points = projectedRoute
+        .map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`)
+        .join(" ");
+
+      const routeShadow = createSVGElement("polyline", {
+        points,
+        fill: "none",
+        stroke: "rgba(36,48,45,0.18)",
+        "stroke-width": "15",
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round"
+      });
+
+      const routeLine = createSVGElement("polyline", {
+        points,
+        fill: "none",
+        stroke: "#55776d",
+        "stroke-width": "8",
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round"
+      });
+
+      elements.routeMap.append(routeShadow, routeLine);
+
+      state.routeStops.forEach((stop, index) => {
+        const [x, y] = project([stop.lon, stop.lat]);
+
+        const group = createSVGElement("g", {
+          transform: `translate(${x} ${y})`
+        });
+
+        const halo = createSVGElement("circle", {
+          cx: "0",
+          cy: "0",
+          r: "18",
+          fill: "rgba(248,248,244,0.88)"
+        });
+
+        const marker = createSVGElement("circle", {
+          cx: "0",
+          cy: "0",
+          r: "13",
+          fill: index === 0 ? "#a9795d" : "#36564e"
+        });
+
+        const label = createSVGElement("text", {
+          x: "0",
+          y: "4",
+          "text-anchor": "middle",
+          fill: "#ffffff",
+          "font-size": "11",
+          "font-weight": "800",
+          "font-family": "system-ui, sans-serif"
+        });
+
+        label.textContent = String(index + 1);
+        group.append(halo, marker, label);
+        elements.routeMap.appendChild(group);
+      });
+
+      elements.mapPlaceholder.hidden = true;
+    }
+
+    function directionDescription(step) {
+      const maneuver = step.maneuver || {};
+      const type = maneuver.type || "continue";
+      const modifier = maneuver.modifier || "";
+      const road = step.name ? ` onto ${step.name}` : "";
+
+      const descriptions = {
+        depart: "Depart",
+        arrive: "Arrive at the destination",
+        turn: `Turn ${modifier}`,
+        continue: `Continue ${modifier}`,
+        merge: `Merge ${modifier}`,
+        fork: `Keep ${modifier}`,
+        "on ramp": `Take the ramp ${modifier}`,
+        "off ramp": `Take the exit ${modifier}`,
+        roundabout: "Enter the roundabout",
+        rotary: "Enter the rotary",
+        "new name": "Continue",
+        notification: "Continue"
+      };
+
+      const description =
+        descriptions[type] ||
+        `${type.charAt(0).toUpperCase()}${type.slice(1)} ${modifier}`;
+
+      return type === "arrive"
+        ? description
+        : `${description.trim()}${road}`;
+    }
+
+    function directionSymbol(step) {
+      const type = step.maneuver?.type || "continue";
+      const modifier = step.maneuver?.modifier || "";
+
+      if (type === "depart") return "●";
+      if (type === "arrive") return "◆";
+      if (type.includes("roundabout") || type === "rotary") return "↻";
+      if (modifier.includes("left")) return "↰";
+      if (modifier.includes("right")) return "↱";
+      if (type.includes("ramp")) return "↗";
+      return "↑";
+    }
+
+    function renderDirections(route) {
+      elements.directionsList.replaceChildren();
+
+      const steps = (route.legs || []).flatMap(
+        (leg) => leg.steps || []
+      );
+
+      if (steps.length === 0) {
+        elements.directionsWrap.hidden = true;
+        return;
+      }
+
+      steps.forEach((step) => {
+        const item = document.createElement("li");
+        item.className = "direction-item";
+
+        const icon = document.createElement("span");
+        icon.className = "direction-icon";
+        icon.textContent = directionSymbol(step);
+        icon.setAttribute("aria-hidden", "true");
+
+        const instruction = document.createElement("span");
+        instruction.className = "direction-text";
+        instruction.textContent = directionDescription(step);
+
+        const distance = document.createElement("span");
+        distance.className = "direction-distance";
+        distance.textContent = formatDistance(step.distance);
+
+        item.append(icon, instruction, distance);
+        elements.directionsList.appendChild(item);
+      });
+
+      elements.directionsWrap.hidden = false;
+    }
+
+    function renderRouteResult(route) {
+      elements.distanceMetric.textContent =
+        formatDistance(route.distance);
+      elements.durationMetric.textContent =
+        formatDuration(route.duration);
+      elements.stopsMetric.textContent = state.routeStops.length;
+      elements.openNavigationButton.disabled = false;
+
+      renderRouteMap(route.geometry?.coordinates || []);
+      renderDirections(route);
+    }
+
+    elements.openNavigationButton.addEventListener("click", () => {
+      if (state.routeStops.length < 2) return;
+
+      const first = state.routeStops[0](0);
+      const last = state.routeStops[state.routeStops.length - 1];
+      const middle = state.routeStops.slice(1, -1);
+
+      const endpoint = new URL(
+        "https://www.google.com/maps/dir/"
+      );
+
+      endpoint.searchParams.set("api", "1");
+      endpoint.searchParams.set(
+        "origin",
+        `${first.lat},${first.lon}`
+      );
+      endpoint.searchParams.set(
+        "destination",
+        `${last.lat},${last.lon}`
+      );
+      endpoint.searchParams.set("travelmode", "driving");
+
+      if (middle.length > 0) {
+        endpoint.searchParams.set(
+          "waypoints",
+          middle
+            .map((stop) => `${stop.lat},${stop.lon}`)
+            .join("|")
+        );
+      }
+
+      window.open(
+        endpoint.toString(),
+        "_blank",
+        "noopener,noreferrer"
+      );
+    });
+
+    /* =========================================================
+       Mario-inspired canvas game
+       ========================================================= */
+
+    const game = {
+      canvas: document.getElementById("gameCanvas"),
+      context: document.getElementById("gameCanvas").getContext("2d"),
+      overlay: document.getElementById("gameOverlay"),
+      overlayTitle: document.getElementById("gameOverlayTitle"),
+      overlayText: document.getElementById("gameOverlayText"),
+      startButton: document.getElementById("startGameButton"),
+      coinsOutput: document.getElementById("gameCoins"),
+      livesOutput: document.getElementById("gameLives"),
+      scoreOutput: document.getElementById("gameScore"),
+      restartButton: document.getElementById("restartGameTop"),
+
+      initialized: false,
+      running: false,
+      animationFrame: null,
+      previousTime: 0,
+      cameraX: 0,
+      worldWidth: 3000,
+      gravity: 1850,
+      keys: {
+        left: false,
+        right: false,
+        jump: false
+      },
+      jumpWasPressed: false,
+      player: null,
+      platforms: [],
+      parcels: [],
+      enemies: [],
+      goal: null,
+      particles: [],
+      score: 0,
+      collected: 0,
+      lives: 3
+    };
+
+    function buildGameLevel() {
+      game.platforms = [
+        { x: 0, y: 445, w: 520, h: 75 },
+        { x: 590, y: 445, w: 370, h: 75 },
+        { x: 1030, y: 445, w: 520, h: 75 },
+        { x: 1640, y: 445, w: 390, h: 75 },
+        { x: 2110, y: 445, w: 890, h: 75 },
+
+        { x: 245, y: 350, w: 150, h: 24 },
+        { x: 680, y: 328, w: 170, h: 24 },
+        { x: 1120, y: 340, w: 135, h: 24 },
+        { x: 1340, y: 275, w: 145, h: 24 },
+        { x: 1730, y: 338, w: 145, h: 24 },
+        { x: 1905, y: 265, w: 100, h: 24 },
+        { x: 2220, y: 350, w: 170, h: 24 },
+        { x: 2470, y: 290, w: 145, h: 24 }
+      ];
+
+      game.parcels = [
+        { x: 310, y: 310, collected: false },
+        { x: 750, y: 288, collected: false },
+        { x: 1175, y: 300, collected: false },
+        { x: 1410, y: 235, collected: false },
+        { x: 1785, y: 298, collected: false },
+        { x: 1940, y: 225, collected: false },
+        { x: 2295, y: 310, collected: false },
+        { x: 2530, y: 250, collected: false },
+        { x: 2710, y: 400, collected: false }
+      ];
+
+      game.enemies = [
+        {
+          x: 820,
+          y: 409,
+          w: 34,
+          h: 36,
+          minX: 610,
+          maxX: 920,
+          speed: 62,
+          direction: -1,
+          alive: true
+        },
+        {
+          x: 1265,
+          y: 409,
+          w: 34,
+          h: 36,
+          minX: 1060,
+          maxX: 1500,
+          speed: 72,
+          direction: 1,
+          alive: true
+        },
+        {
+          x: 1780,
+          y: 409,
+          w: 34,
+          h: 36,
+          minX: 1660,
+          maxX: 1985,
+          speed: 68,
+          direction: -1,
+          alive: true
+        },
+        {
+          x: 2310,
+          y: 409,
+          w: 34,
+          h: 36,
+          minX: 2150,
+          maxX: 2600,
+          speed: 78,
+          direction: 1,
+          alive: true
+        }
+      ];
+
+      game.goal = {
+        x: 2860,
+        y: 275,
+        w: 28,
+        h: 170
+      };
+    }
+
+    function resetPlayer() {
+      game.player = {
+        x: 80,
+        y: 380,
+        previousY: 380,
+        w: 34,
+        h: 48,
+        vx: 0,
+        vy: 0,
+        speed: 270,
+        jumpPower: 650,
+        grounded: false,
+        facing: 1,
+        invulnerable: 0
+      };
+
+      game.cameraX = 0;
+    }
+
+    function initializeGame() {
+      if (game.initialized) {
+        drawGame();
+        return;
+      }
+
+      game.initialized = true;
+      buildGameLevel();
+      resetPlayer();
+      updateGameStats();
+      drawGame();
+    }
+
+    function startGame(resetEverything = true) {
+      initializeGame();
+
+      if (resetEverything) {
+        game.score = 0;
+        game.collected = 0;
+        game.lives = 3;
+        game.particles = [];
+        buildGameLevel();
+        resetPlayer();
+      }
+
+      game.running = true;
+      game.overlay.hidden = true;
+      game.previousTime = performance.now();
+      updateGameStats();
+
+      if (game.animationFrame) {
+        cancelAnimationFrame(game.animationFrame);
+      }
+
+      game.animationFrame = requestAnimationFrame(gameLoop);
+      game.canvas.focus({ preventScroll: true });
+    }
+
+    function showGameOverlay(title, message, buttonText) {
+      game.running = false;
+      game.overlayTitle.textContent = title;
+      game.overlayText.textContent = message;
+      game.startButton.textContent = buttonText;
+      game.overlay.hidden = false;
+    }
+
+    function updateGameStats() {
+      game.coinsOutput.textContent = game.collected;
+      game.livesOutput.textContent = game.lives;
+      game.scoreOutput.textContent = game.score;
+    }
+
+    function rectanglesOverlap(a, b) {
+      return (
+        a.x < b.x + b.w &&
+        a.x + a.w > b.x &&
+        a.y < b.y + b.h &&
+        a.y + a.h > b.y
+      );
+    }
+
+    function spawnParticles(x, y, color, count = 8) {
+      for (let index = 0; index < count; index += 1) {
+        game.particles.push({
+          x,
+          y,
+          vx: (Math.random() - 0.5) * 180,
+          vy: -Math.random() * 180 - 40,
+          life: 0.7 + Math.random() * 0.35,
+          size: 3 + Math.random() * 5,
+          color
+        });
+      }
+    }
+
+    function loseLife() {
+      const player = game.player;
+
+      if (player.invulnerable > 0) return;
+
+      game.lives -= 1;
+      updateGameStats();
+
+      if (game.lives <= 0) {
+        showGameOverlay(
+          "Shift over",
+          `You collected ${game.collected} parcels and scored ${game.score} points.`,
+          "Try again"
+        );
+        return;
+      }
+
+      resetPlayer();
+      game.player.invulnerable = 1.6;
+    }
+
+    function updateGame(delta) {
+      const player = game.player;
+      player.previousY = player.y;
+
+      if (player.invulnerable > 0) {
+        player.invulnerable -= delta;
+      }
+
+      const direction =
+        (game.keys.right ? 1 : 0) -
+        (game.keys.left ? 1 : 0);
+
+      if (direction !== 0) {
+        player.vx += direction * 1450 * delta;
+        player.facing = direction;
+      } else {
+        player.vx *= Math.pow(0.0005, delta);
+      }
+
+      player.vx = Math.max(
+        -player.speed,
+        Math.min(player.speed, player.vx)
+      );
+
+      const jumpPressed =
+        game.keys.jump && !game.jumpWasPressed;
+
+      if (jumpPressed && player.grounded) {
+        player.vy = -player.jumpPower;
+        player.grounded = false;
+      }
+
+      game.jumpWasPressed = game.keys.jump;
+      player.vy += game.gravity * delta;
+
+      player.x += player.vx * delta;
+      player.x = Math.max(
+        0,
+        Math.min(game.worldWidth - player.w, player.x)
+      );
+
+      player.y += player.vy * delta;
+      player.grounded = false;
+
+      for (const platform of game.platforms) {
+        const wasAbove =
+          player.previousY + player.h <= platform.y + 7;
+
+        const isFalling = player.vy >= 0;
+
+        if (
+          isFalling &&
+          wasAbove &&
+          rectanglesOverlap(player, platform)
+        ) {
+          player.y = platform.y - player.h;
+          player.vy = 0;
+          player.grounded = true;
+        }
+      }
+
+      if (player.y > game.canvas.height + 120) {
+        loseLife();
+        return;
+      }
+
+      game.parcels.forEach((
+
