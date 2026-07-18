@@ -3,47 +3,39 @@
 <head>
   <meta charset="utf-8">
   <title>Canvas test</title>
-  <style>
-    body {
-      color: white;
-      background: #181818;
-      font-family: sans-serif;
-    }
-
-    canvas {
-      display: block;
-      border: 2px solid white;
-    }
-  </style>
 </head>
 <body>
-  &lt;canvas id="test" width="500" height="300"&gt;
-    Canvas fallback text
-  </canvas>
-
-  <p id="status">Testing…</p>
+  <canvas id="canvas" width="500" height="300"></canvas>
+  <p id="status"></p>
 
   <script>
-    const canvas = document.getElementById("test");
-    const context = canvas.getContext("2d");
-    const status = document.getElementById("status");
+    document.addEventListener("DOMContentLoaded", () => {
+      const canvas = document.getElementById("canvas");
+      const status = document.getElementById("status");
 
-    if (!context) {
-      status.textContent = "Canvas exists, but no 2D context could be created.";
-    } else {
-      const gradient = context.createLinearGradient(0, 0, 500, 300);
-      gradient.addColorStop(0, "#2563eb");
-      gradient.addColorStop(1, "#e11d48");
+      if (!canvas) {
+        console.error('No element with id="canvas" was found.');
+        status.textContent = "Error: Canvas element was not found.";
+        return;
+      }
 
-      context.fillStyle = gradient;
-      context.fillRect(0, 0, 500, 300);
+      const ctx = canvas.getContext("2d");
 
-      context.fillStyle = "white";
-      context.font = "bold 32px sans-serif";
-      context.fillText("Canvas works in Brave", 55, 160);
+      if (!ctx) {
+        console.error("The Canvas 2D context could not be created.");
+        status.textContent = "Error: Canvas 2D context unavailable.";
+        return;
+      }
 
-      status.textContent = "Success: the Canvas 2D context is working.";
-    }
+      ctx.fillStyle = "#17324d";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 28px sans-serif";
+      ctx.fillText("Canvas works in Brave", 75, 155);
+
+      status.textContent = "Success";
+    });
   </script>
 </body>
 </html>
