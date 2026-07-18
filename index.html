@@ -2,20 +2,220 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Canvas test</title>
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  >
+
+  <title>Animated Mona Lisa Canvas</title>
+
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family:
+        Inter, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      padding: 24px;
+      display: grid;
+      place-items: center;
+      overflow-x: hidden;
+      color: #f4ead7;
+      background:
+        radial-gradient(circle at 50% 20%, #44372d 0%, #211b18 45%, #100d0c 100%);
+    }
+
+    .app {
+      width: min(100%, 1050px);
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(1.7rem, 4vw, 3rem);
+      font-weight: 500;
+      letter-spacing: 0.04em;
+    }
+
+    .subtitle {
+      margin: 0 0 20px;
+      color: #cdbda5;
+      line-height: 1.5;
+    }
+
+    .canvas-frame {
+      position: relative;
+      width: 100%;
+      padding: clamp(8px, 1.5vw, 14px);
+      overflow: hidden;
+      border: 1px solid #705c3f;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #312417, #8b6b35, #2b2015);
+      box-shadow:
+        0 25px 70px rgb(0 0 0 / 55%),
+        inset 0 0 20px rgb(255 219 147 / 12%);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      aspect-ratio: 900 / 620;
+      border-radius: 5px;
+      background: #17130f;
+      touch-action: manipulation;
+    }
+
+    .controls {
+      margin-top: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+    }
+
+    button {
+      min-width: 110px;
+      padding: 10px 18px;
+      border: 1px solid #a98b55;
+      border-radius: 999px;
+      color: #fff8e9;
+      background: #3d2f20;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+      transition:
+        transform 150ms ease,
+        background-color 150ms ease,
+        border-color 150ms ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      background: #59442b;
+      border-color: #d1ad6c;
+    }
+
+    button:focus-visible {
+      outline: 3px solid #e3bd75;
+      outline-offset: 3px;
+    }
+
+    .progress-wrap {
+      width: min(360px, 90vw);
+      height: 10px;
+      overflow: hidden;
+      border: 1px solid #6f5a3c;
+      border-radius: 999px;
+      background: #17120e;
+    }
+
+    #progressBar {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #84652d, #e4bd68, #fff0bc);
+      transition: width 100ms linear;
+    }
+
+    #status {
+      min-height: 1.5em;
+      margin: 12px 0 0;
+      color: #d4c3a8;
+      font-size: 0.95rem;
+    }
+
+    .noscript {
+      padding: 16px;
+      color: white;
+      background: #7d2020;
+    }
+
+    @media (max-width: 600px) {
+      body {
+        padding: 12px;
+      }
+
+      .controls {
+        gap: 8px;
+      }
+
+      button {
+        min-width: 95px;
+        padding: 9px 14px;
+      }
+    }
+  </style>
 </head>
+
 <body>
-  <canvas id="canvas" width="500" height="300"></canvas>
-  <p id="status"></p>
+  <main class="app">
+    <h1>The Portrait Emerges</h1>
+
+    <p class="subtitle">
+      A procedural Canvas interpretation inspired by Leonardo da Vinci’s
+      <em>Mona Lisa</em>.
+    </p>
+
+    <div class="canvas-frame">
+      &lt;canvas id="artCanvas" width="900" height="620"&gt;
+        Your browser does not support the HTML canvas element.
+      </canvas>
+    </div>
+
+    <div class="controls" aria-label="Animation controls">
+      <button id="pauseButton" type="button">Pause</button>
+      <button id="restartButton" type="button">Restart</button>
+      <button id="finishButton" type="button">Show finished</button>
+
+      <div
+        class="progress-wrap"
+        role="progressbar"
+        aria-label="Painting progress"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="0"
+      >
+        <div id="progressBar"></div>
+      </div>
+    </div>
+
+    <p id="status" aria-live="polite">Preparing the canvas…</p>
+
+    <noscript>
+      <p class="noscript">
+        JavaScript must be enabled to display the animation.
+      </p>
+    </noscript>
+  </main>
 
   <script>
+    "use strict";
+
     document.addEventListener("DOMContentLoaded", () => {
-      const canvas = document.getElementById("canvas");
+      const canvas = document.getElementById("artCanvas");
+      const pauseButton = document.getElementById("pauseButton");
+      const restartButton = document.getElementById("restartButton");
+      const finishButton = document.getElementById("finishButton");
+      const progressBar = document.getElementById("progressBar");
+      const progressWrap = document.querySelector(".progress-wrap");
       const status = document.getElementById("status");
 
       if (!canvas) {
-        console.error('No element with id="canvas" was found.');
-        status.textContent = "Error: Canvas element was not found.";
+        console.error('Canvas with id="artCanvas" was not found.');
+        if (status) {
+          status.textContent = "Error: Canvas element was not found.";
+        }
         return;
       }
 
@@ -23,18 +223,771 @@
 
       if (!ctx) {
         console.error("The Canvas 2D context could not be created.");
-        status.textContent = "Error: Canvas 2D context unavailable.";
+        status.textContent = "Error: Canvas 2D is unavailable.";
         return;
       }
 
-      ctx.fillStyle = "#17324d";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const WIDTH = canvas.width;
+      const HEIGHT = canvas.height;
+      const DURATION = 16000;
 
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 28px sans-serif";
-      ctx.fillText("Canvas works in Brave", 75, 155);
+      const finalCanvas = document.createElement("canvas");
+      finalCanvas.width = WIDTH;
+      finalCanvas.height = HEIGHT;
+      const finalCtx = finalCanvas.getContext("2d");
 
-      status.textContent = "Success";
+      const paintCanvas = document.createElement("canvas");
+      paintCanvas.width = WIDTH;
+      paintCanvas.height = HEIGHT;
+      const paintCtx = paintCanvas.getContext("2d");
+
+      let animationFrame = 0;
+      let startTime = 0;
+      let storedElapsed = 0;
+      let isPaused = false;
+      let isFinished = false;
+      let paintedStrokeCount = 0;
+      let brushPosition = { x: WIDTH / 2, y: HEIGHT / 2 };
+      let previousBrushPosition = { ...brushPosition };
+
+      function clamp(value, minimum, maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
+      }
+
+      function smoothStep(value) {
+        const t = clamp(value, 0, 1);
+        return t * t * (3 - 2 * t);
+      }
+
+      function pathShape(context, points, close = true) {
+        context.beginPath();
+        context.moveTo(points[0][0], points[0][1]);
+
+        for (let i = 1; i < points.length; i++) {
+          context.lineTo(points[i][0], points[i][1]);
+        }
+
+        if (close) {
+          context.closePath();
+        }
+      }
+
+      function ellipse(context, x, y, radiusX, radiusY, color) {
+        context.beginPath();
+        context.ellipse(x, y, radiusX, radiusY, 0, 0, Math.PI * 2);
+        context.fillStyle = color;
+        context.fill();
+      }
+
+      function drawGalleryBackground(context) {
+        const background = context.createRadialGradient(
+          WIDTH / 2, 220, 80,
+          WIDTH / 2, HEIGHT / 2, 660
+        );
+
+        background.addColorStop(0, "#40352b");
+        background.addColorStop(0.55, "#211b17");
+        background.addColorStop(1, "#0e0c0b");
+
+        context.fillStyle = background;
+        context.fillRect(0, 0, WIDTH, HEIGHT);
+
+        const floor = context.createLinearGradient(0, 470, 0, HEIGHT);
+        floor.addColorStop(0, "rgba(75, 57, 40, 0)");
+        floor.addColorStop(1, "rgba(10, 8, 7, 0.9)");
+
+        context.fillStyle = floor;
+        context.fillRect(0, 430, WIDTH, HEIGHT - 430);
+      }
+
+      function drawFrame(context, blank = false) {
+        context.save();
+
+        context.shadowColor = "rgba(0, 0, 0, 0.75)";
+        context.shadowBlur = 28;
+        context.shadowOffsetY = 15;
+
+        const outerFrame = context.createLinearGradient(115, 25, 785, 595);
+        outerFrame.addColorStop(0, "#3d2612");
+        outerFrame.addColorStop(0.25, "#a77b32");
+        outerFrame.addColorStop(0.5, "#4b2e14");
+        outerFrame.addColorStop(0.75, "#c09242");
+        outerFrame.addColorStop(1, "#2b190d");
+
+        context.fillStyle = outerFrame;
+        context.fillRect(110, 18, 680, 584);
+        context.restore();
+
+        context.strokeStyle = "#d4ae59";
+        context.lineWidth = 4;
+        context.strokeRect(120, 28, 660, 564);
+
+        context.strokeStyle = "#2d1b0d";
+        context.lineWidth = 10;
+        context.strokeRect(132, 40, 636, 540);
+
+        context.fillStyle = blank ? "#b99c70" : "#71674d";
+        context.fillRect(145, 53, 610, 514);
+
+        if (blank) {
+          const paper = context.createRadialGradient(450, 290, 50, 450, 300, 430);
+          paper.addColorStop(0, "#d8c39b");
+          paper.addColorStop(0.65, "#b89b6e");
+          paper.addColorStop(1, "#816843");
+
+          context.fillStyle = paper;
+          context.fillRect(145, 53, 610, 514);
+
+          context.globalAlpha = 0.09;
+
+          for (let i = 0; i < 180; i++) {
+            const x = 145 + ((i * 83) % 610);
+            const y = 53 + ((i * 47) % 514);
+            const radius = 1 + (i % 3);
+
+            ellipse(context, x, y, radius, radius * 0.6, "#49351e");
+          }
+
+          context.globalAlpha = 1;
+        }
+      }
+
+      function drawLandscape(context) {
+        context.save();
+        context.beginPath();
+        context.rect(145, 53, 610, 514);
+        context.clip();
+
+        const sky = context.createLinearGradient(0, 53, 0, 360);
+        sky.addColorStop(0, "#6f816e");
+        sky.addColorStop(0.42, "#a49b72");
+        sky.addColorStop(1, "#686f55");
+
+        context.fillStyle = sky;
+        context.fillRect(145, 53, 610, 514);
+
+        const distantMountains = [
+          [145][250], [205][170], [264][224], [334][132],
+          [394][212], [463][145], [525][215], [605][128],
+          [674][205], [755][151], [755][340], [145][340]
+        ];
+
+        pathShape(context, distantMountains);
+        context.fillStyle = "#586653";
+        context.fill();
+
+        const highlights = [
+          [145][277], [215][213], [270][248], [340][180],
+          [404][246], [468][186], [533][252], [610][171],
+          [683][237], [755][194], [755][360], [145][360]
+        ];
+
+        pathShape(context, highlights);
+        context.fillStyle = "rgba(153, 152, 111, 0.65)";
+        context.fill();
+
+        pathShape(context, [
+          [145][345], [220][290], [286][315], [345][280],
+          [412][330], [486][278], [552][318], [620][275],
+          [690][315], [755][260], [755][567], [145][567]
+        ]);
+
+        context.fillStyle = "#3e4e3e";
+        context.fill();
+
+        context.beginPath();
+        context.moveTo(145, 340);
+        context.bezierCurveTo(235, 312, 260, 389, 352, 354);
+        context.bezierCurveTo(454, 316, 512, 392, 610, 342);
+        context.bezierCurveTo(676, 309, 712, 330, 755, 311);
+        context.lineWidth = 17;
+        context.strokeStyle = "#7d876c";
+        context.stroke();
+
+        context.beginPath();
+        context.moveTo(145, 352);
+        context.bezierCurveTo(235, 324, 270, 398, 355, 367);
+        context.bezierCurveTo(452, 332, 520, 405, 615, 355);
+        context.bezierCurveTo(680, 322, 718, 342, 755, 325);
+        context.lineWidth = 5;
+        context.strokeStyle = "rgba(198, 194, 143, 0.5)";
+        context.stroke();
+
+        context.restore();
+      }
+
+      function drawHair(context) {
+        const hairGradient = context.createRadialGradient(
+          450, 230, 40,
+          450, 270, 210
+        );
+
+        hairGradient.addColorStop(0, "#493426");
+        hairGradient.addColorStop(0.5, "#241b16");
+        hairGradient.addColorStop(1, "#0f0d0b");
+
+        context.beginPath();
+        context.moveTo(340, 425);
+        context.bezierCurveTo(310, 347, 325, 211, 370, 159);
+        context.bezierCurveTo(412, 108, 498, 106, 538, 162);
+        context.bezierCurveTo(581, 222, 592, 355, 558, 435);
+        context.bezierCurveTo(520, 481, 377, 477, 340, 425);
+        context.closePath();
+
+        context.fillStyle = hairGradient;
+        context.fill();
+
+        context.lineWidth = 3;
+        context.lineCap = "round";
+
+        for (let i = 0; i < 24; i++) {
+          const offset = i * 7;
+          context.beginPath();
+          context.moveTo(370 + offset * 0.42, 169 + (i % 4) * 3);
+          context.bezierCurveTo(
+            330 + offset * 0.2,
+            250 + i * 5,
+            350 + offset * 0.35,
+            360 + i * 3,
+            344 + offset * 0.55,
+            432
+          );
+
+          context.strokeStyle =
+            i % 3 === 0
+              ? "rgba(142, 106, 68, 0.25)"
+              : "rgba(31, 22, 16, 0.55)";
+
+          context.stroke();
+        }
+      }
+
+      function drawBody(context) {
+        const dress = context.createLinearGradient(300, 320, 610, 560);
+        dress.addColorStop(0, "#2f2d20");
+        dress.addColorStop(0.45, "#4e4a31");
+        dress.addColorStop(1, "#171912");
+
+        context.beginPath();
+        context.moveTo(370, 330);
+        context.bezierCurveTo(309, 349, 277, 435, 253, 567);
+        context.lineTo(647, 567);
+        context.bezierCurveTo(627, 444, 592, 358, 531, 330);
+        context.closePath();
+        context.fillStyle = dress;
+        context.fill();
+
+        context.beginPath();
+        context.moveTo(371, 325);
+        context.bezierCurveTo(401, 354, 497, 357, 530, 325);
+        context.lineTo(547, 362);
+        context.bezierCurveTo(500, 402, 398, 402, 352, 361);
+        context.closePath();
+        context.fillStyle = "#6b6240";
+        context.fill();
+
+        context.strokeStyle = "rgba(185, 168, 107, 0.3)";
+        context.lineWidth = 2;
+
+        for (let i = 0; i < 10; i++) {
+          context.beginPath();
+          context.moveTo(336 + i * 25, 378);
+          context.bezierCurveTo(
+            320 + i * 26,
+            445,
+            310 + i * 28,
+            510,
+            302 + i * 32,
+            567
+          );
+          context.stroke();
+        }
+      }
+
+      function drawFace(context) {
+        const skin = context.createRadialGradient(425, 220, 15, 460, 270, 150);
+        skin.addColorStop(0, "#d8b488");
+        skin.addColorStop(0.45, "#bd946c");
+        skin.addColorStop(0.8, "#8f694d");
+        skin.addColorStop(1, "#654837");
+
+        context.beginPath();
+        context.moveTo(383, 179);
+        context.bezierCurveTo(405, 139, 487, 138, 515, 181);
+        context.bezierCurveTo(536, 216, 523, 297, 495, 331);
+        context.bezierCurveTo(475, 355, 428, 357, 402, 329);
+        context.bezierCurveTo(374, 298, 359, 220, 383, 179);
+        context.closePath();
+        context.fillStyle = skin;
+        context.fill();
+
+        context.fillStyle = "rgba(84, 54, 39, 0.25)";
+        ellipse(context, 389, 254, 15, 63, "rgba(79, 52, 37, 0.22)");
+        ellipse(context, 506, 256, 13, 62, "rgba(75, 48, 35, 0.25)");
+        ellipse(context, 459, 309, 43, 24, "rgba(96, 57, 43, 0.13)");
+
+        // Eyebrows
+        context.lineCap = "round";
+        context.lineWidth = 5;
+        context.strokeStyle = "rgba(62, 42, 32, 0.62)";
+
+        context.beginPath();
+        context.moveTo(399, 221);
+        context.quadraticCurveTo(419, 211, 438, 221);
+        context.stroke();
+
+        context.beginPath();
+        context.moveTo(465, 220);
+        context.quadraticCurveTo(485, 210, 501, 220);
+        context.stroke();
+
+        // Eyes
+        context.fillStyle = "#e0c7a1";
+
+        context.beginPath();
+        context.ellipse(420, 237, 18, 8, -0.05, 0, Math.PI * 2);
+        context.fill();
+
+        context.beginPath();
+        context.ellipse(481, 236, 17, 8, 0.05, 0, Math.PI * 2);
+        context.fill();
+
+        ellipse(context, 424, 237, 5.5, 6, "#4b4733");
+        ellipse(context, 477, 236, 5.5, 6, "#454431");
+        ellipse(context, 424, 237, 2.2, 2.8, "#171611");
+        ellipse(context, 477, 236, 2.2, 2.8, "#171611");
+
+        // Nose
+        context.beginPath();
+        context.moveTo(453, 238);
+        context.bezierCurveTo(451, 260, 445, 278, 447, 288);
+        context.bezierCurveTo(456, 295, 466, 292, 470, 286);
+        context.strokeStyle = "rgba(91, 58, 43, 0.48)";
+        context.lineWidth = 2.5;
+        context.stroke();
+
+        // Smile
+        context.beginPath();
+        context.moveTo(422, 310);
+        context.bezierCurveTo(439, 318, 465, 319, 484, 307);
+        context.bezierCurveTo(466, 326, 441, 328, 422, 310);
+        context.fillStyle = "rgba(103, 53, 47, 0.58)";
+        context.fill();
+
+        context.beginPath();
+        context.moveTo(425, 310);
+        context.bezierCurveTo(444, 316, 464, 316, 481, 307);
+        context.strokeStyle = "rgba(68, 39, 34, 0.55)";
+        context.lineWidth = 1.5;
+        context.stroke();
+
+        context.beginPath();
+        context.moveTo(412, 333);
+        context.quadraticCurveTo(452, 351, 492, 330);
+        context.strokeStyle = "rgba(239, 196, 143, 0.16)";
+        context.lineWidth = 3;
+        context.stroke();
+      }
+
+      function drawVeil(context) {
+        context.save();
+        context.globalAlpha = 0.19;
+
+        context.beginPath();
+        context.moveTo(369, 166);
+        context.bezierCurveTo(405, 116, 497, 116, 534, 168);
+        context.bezierCurveTo(563, 248, 550, 341, 579, 405);
+        context.lineTo(532, 383);
+        context.bezierCurveTo(518, 319, 540, 227, 508, 166);
+        context.bezierCurveTo(475, 137, 412, 138, 382, 171);
+        context.bezierCurveTo(358, 242, 375, 332, 349, 398);
+        context.lineTo(322, 414);
+        context.bezierCurveTo(352, 335, 329, 235, 369, 166);
+        context.closePath();
+
+        context.fillStyle = "#ddd3ad";
+        context.fill();
+        context.restore();
+      }
+
+      function drawHands(context) {
+        const handGradient = context.createLinearGradient(360, 425, 540, 525);
+        handGradient.addColorStop(0, "#c49b72");
+        handGradient.addColorStop(0.6, "#a87b59");
+        handGradient.addColorStop(1, "#76523f");
+
+        context.beginPath();
+        context.moveTo(350, 449);
+        context.bezierCurveTo(388, 428, 426, 438, 459, 466);
+        context.bezierCurveTo(487, 483, 511, 486, 552, 482);
+        context.bezierCurveTo(571, 489, 570, 507, 554, 514);
+        context.bezierCurveTo(496, 522, 448, 505, 413, 484);
+        context.bezierCurveTo(386, 477, 363, 475, 344, 466);
+        context.closePath();
+        context.fillStyle = handGradient;
+        context.fill();
+
+        context.beginPath();
+        context.moveTo(405, 467);
+        context.bezierCurveTo(442, 452, 482, 458, 520, 480);
+        context.bezierCurveTo(538, 490, 532, 507, 517, 510);
+        context.bezierCurveTo(473, 506, 438, 495, 397, 482);
+        context.bezierCurveTo(385, 477, 389, 469, 405, 467);
+        context.closePath();
+        context.fillStyle = "#bc8f68";
+        context.fill();
+
+        context.strokeStyle = "rgba(91, 58, 43, 0.32)";
+        context.lineWidth = 1.5;
+
+        for (let i = 0; i < 4; i++) {
+          context.beginPath();
+          context.moveTo(414 + i * 11, 470 + i * 2);
+          context.quadraticCurveTo(462, 482 + i * 4, 510, 491 + i * 3);
+          context.stroke();
+        }
+      }
+
+      function drawPaintingTexture(context) {
+        context.save();
+        context.beginPath();
+        context.rect(145, 53, 610, 514);
+        context.clip();
+
+        context.globalAlpha = 0.06;
+
+        for (let i = 0; i < 350; i++) {
+          const x = 145 + ((i * 97) % 610);
+          const y = 53 + ((i * 53) % 514);
+          const length = 2 + (i % 9);
+
+          context.beginPath();
+          context.moveTo(x, y);
+          context.lineTo(x + length, y + ((i % 3) - 1) * 2);
+          context.strokeStyle = i % 2 === 0 ? "#f6deaa" : "#2a1c14";
+          context.lineWidth = 0.6;
+          context.stroke();
+        }
+
+        const vignette = context.createRadialGradient(
+          450, 285, 150,
+          450, 285, 390
+        );
+
+        vignette.addColorStop(0, "rgba(0, 0, 0, 0)");
+        vignette.addColorStop(0.72, "rgba(28, 19, 13, 0.08)");
+        vignette.addColorStop(1, "rgba(10, 7, 5, 0.52)");
+
+        context.globalAlpha = 1;
+        context.fillStyle = vignette;
+        context.fillRect(145, 53, 610, 514);
+        context.restore();
+      }
+
+      function drawFinishedArtwork() {
+        drawGalleryBackground(finalCtx);
+        drawFrame(finalCtx, false);
+
+        finalCtx.save();
+        finalCtx.beginPath();
+        finalCtx.rect(145, 53, 610, 514);
+        finalCtx.clip();
+
+        drawLandscape(finalCtx);
+        drawHair(finalCtx);
+        drawBody(finalCtx);
+        drawFace(finalCtx);
+        drawVeil(finalCtx);
+        drawHands(finalCtx);
+        drawPaintingTexture(finalCtx);
+
+        finalCtx.restore();
+      }
+
+      function drawBlankArtwork() {
+        drawGalleryBackground(ctx);
+        drawFrame(ctx, true);
+      }
+
+      function createBrushRoute() {
+        const route = [];
+        const spacing = 19;
+        const left = 126;
+        const right = 774;
+        const top = 36;
+        const bottom = 585;
+
+        let row = 0;
+
+        for (let y = top; y <= bottom; y += spacing) {
+          const rowPoints = [];
+
+          for (let x = left; x <= right; x += spacing) {
+            const wobbleX = Math.sin(x * 0.075 + y * 0.04) * 5;
+            const wobbleY = Math.cos(x * 0.055 + y * 0.08) * 4;
+
+            rowPoints.push({
+              x: x + wobbleX,
+              y: y + wobbleY,
+              radius: 24 + ((x + y) % 8),
+              rotation: Math.sin(x * 0.03) * 0.7
+            });
+          }
+
+          if (row % 2 === 1) {
+            rowPoints.reverse();
+          }
+
+          route.push(...rowPoints);
+          row++;
+        }
+
+        return route;
+      }
+
+      const brushRoute = createBrushRoute();
+
+      function applyPaintStroke(stroke) {
+        paintCtx.save();
+        paintCtx.beginPath();
+        paintCtx.ellipse(
+          stroke.x,
+          stroke.y,
+          stroke.radius * 1.35,
+          stroke.radius * 0.7,
+          stroke.rotation,
+          0,
+          Math.PI * 2
+        );
+        paintCtx.clip();
+        paintCtx.globalAlpha = 0.92;
+        paintCtx.drawImage(finalCanvas, 0, 0);
+        paintCtx.restore();
+
+        paintCtx.save();
+        paintCtx.globalAlpha = 0.16;
+        paintCtx.strokeStyle = "#ecd7a5";
+        paintCtx.lineWidth = 1.2;
+
+        for (let i = -2; i <= 2; i++) {
+          paintCtx.beginPath();
+          paintCtx.moveTo(
+            stroke.x - stroke.radius,
+            stroke.y + i * 4
+          );
+          paintCtx.lineTo(
+            stroke.x + stroke.radius,
+            stroke.y + i * 4 + Math.sin(stroke.x) * 2
+          );
+          paintCtx.stroke();
+        }
+
+        paintCtx.restore();
+      }
+
+      function drawBrush(context, x, y, previousX, previousY) {
+        const angle = Math.atan2(y - previousY, x - previousX);
+        const safeAngle = Number.isFinite(angle) ? angle : -0.5;
+
+        context.save();
+        context.translate(x, y);
+        context.rotate(safeAngle + 0.55);
+
+        context.shadowColor = "rgba(0, 0, 0, 0.55)";
+        context.shadowBlur = 10;
+        context.shadowOffsetY = 5;
+
+        const handle = context.createLinearGradient(0, -10, 0, 130);
+        handle.addColorStop(0, "#d5aa58");
+        handle.addColorStop(0.5, "#7e4f25");
+        handle.addColorStop(1, "#3c2414");
+
+        context.fillStyle = handle;
+        context.beginPath();
+        context.roundRect(-7, -8, 14, 125, 7);
+        context.fill();
+
+        context.fillStyle = "#ad8b55";
+        context.fillRect(-11, -14, 22, 23);
+
+        context.fillStyle = "#4a3325";
+        context.beginPath();
+        context.moveTo(-10, -14);
+        context.quadraticCurveTo(0, -45, 10, -14);
+        context.closePath();
+        context.fill();
+
+        context.strokeStyle = "rgba(238, 213, 164, 0.35)";
+        context.lineWidth = 1;
+
+        for (let i = -7; i <= 7; i += 3) {
+          context.beginPath();
+          context.moveTo(i, -14);
+          context.lineTo(i * 0.4, -39 + Math.abs(i) * 0.4);
+          context.stroke();
+        }
+
+        context.restore();
+      }
+
+      function render(progress, showBrush = true) {
+        ctx.clearRect(0, 0, WIDTH, HEIGHT);
+        drawBlankArtwork();
+
+        if (progress >= 1) {
+          ctx.drawImage(finalCanvas, 0, 0);
+        } else {
+          ctx.drawImage(paintCanvas, 0, 0);
+        }
+
+        if (showBrush && progress < 1) {
+          drawBrush(
+            ctx,
+            brushPosition.x,
+            brushPosition.y,
+            previousBrushPosition.x,
+            previousBrushPosition.y
+          );
+        }
+
+        const percent = Math.round(progress * 100);
+        progressBar.style.width = `${percent}%`;
+        progressWrap.setAttribute("aria-valuenow", String(percent));
+      }
+
+      function updatePainting(progress) {
+        const easedProgress = smoothStep(progress);
+        const targetCount = Math.floor(easedProgress * brushRoute.length);
+
+        while (paintedStrokeCount < targetCount) {
+          const stroke = brushRoute[paintedStrokeCount];
+
+          previousBrushPosition = { ...brushPosition };
+          brushPosition = { x: stroke.x, y: stroke.y };
+
+          applyPaintStroke(stroke);
+          paintedStrokeCount++;
+        }
+      }
+
+      function completePainting() {
+        cancelAnimationFrame(animationFrame);
+
+        isFinished = true;
+        isPaused = false;
+        storedElapsed = DURATION;
+        paintedStrokeCount = brushRoute.length;
+
+        paintCtx.clearRect(0, 0, WIDTH, HEIGHT);
+        paintCtx.drawImage(finalCanvas, 0, 0);
+
+        render(1, false);
+
+        pauseButton.textContent = "Pause";
+        pauseButton.disabled = true;
+        status.textContent = "The portrait is complete.";
+      }
+
+      function animate(timestamp) {
+        if (isPaused || isFinished) {
+          return;
+        }
+
+        if (!startTime) {
+          startTime = timestamp - storedElapsed;
+        }
+
+        const elapsed = timestamp - startTime;
+        const progress = clamp(elapsed / DURATION, 0, 1);
+
+        updatePainting(progress);
+        render(progress, true);
+
+        status.textContent =
+          progress < 0.2
+            ? "Laying in the landscape…"
+            : progress < 0.48
+              ? "Building the figure and shadows…"
+              : progress < 0.76
+                ? "Developing the face and expression…"
+                : "Adding the final glazes and details…";
+
+        if (progress >= 1) {
+          completePainting();
+          return;
+        }
+
+        animationFrame = requestAnimationFrame(animate);
+      }
+
+      function pauseOrResume() {
+        if (isFinished) {
+          return;
+        }
+
+        if (isPaused) {
+          isPaused = false;
+          startTime = 0;
+          pauseButton.textContent = "Pause";
+          status.textContent = "Painting resumed.";
+          animationFrame = requestAnimationFrame(animate);
+        } else {
+          isPaused = true;
+          cancelAnimationFrame(animationFrame);
+
+          storedElapsed = Math.min(
+            DURATION,
+            performance.now() - startTime
+          );
+
+          pauseButton.textContent = "Resume";
+          status.textContent = "Animation paused.";
+        }
+      }
+
+      function restartAnimation() {
+        cancelAnimationFrame(animationFrame);
+
+        paintCtx.clearRect(0, 0, WIDTH, HEIGHT);
+
+        startTime = 0;
+        storedElapsed = 0;
+        paintedStrokeCount = 0;
+        isPaused = false;
+        isFinished = false;
+
+        brushPosition = { x: 145, y: 53 };
+        previousBrushPosition = { ...brushPosition };
+
+        pauseButton.disabled = false;
+        pauseButton.textContent = "Pause";
+
+        progressBar.style.width = "0%";
+        progressWrap.setAttribute("aria-valuenow", "0");
+        status.textContent = "Beginning a new painting…";
+
+        render(0, true);
+        animationFrame = requestAnimationFrame(animate);
+      }
+
+      pauseButton.addEventListener("click", pauseOrResume);
+      restartButton.addEventListener("click", restartAnimation);
+      finishButton.addEventListener("click", completePainting);
+
+      drawFinishedArtwork();
+      drawBlankArtwork();
+
+      const prefersReducedMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)"
+      ).matches;
+
+      if (prefersReducedMotion) {
+        completePainting();
+        status.textContent =
+          "The finished portrait is displayed because reduced motion is enabled.";
+      } else {
+        restartAnimation();
+      }
     });
   </script>
 </body>
